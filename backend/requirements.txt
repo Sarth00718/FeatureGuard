@@ -1,0 +1,12 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10
+prometheus-client==0.21.1
+pandas==2.2.3
+numpy<2
+scikit-learn==1.5.2
+scipy==1.13.1
+joblib==1.4.2
+PyYAML==6.0.2
+evidently==0.4.40

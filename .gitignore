@@ -1,0 +1,31 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# ML artefacts (large; DVC tracks the data, MLflow tracks the models)
+mlruns/
+mlflow.db
+dev.db
+/models/
+data/raw/winequality-red.csv
+
+# Reports / runtime output
+reports/drift/
+.pytest_cache/
+
+# IDE / OS
+.vscode/
+*.zip
+
+# Kiro agent task files
+.agents/

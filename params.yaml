@@ -1,0 +1,22 @@
+# Single place for ML configuration. DVC tracks these values as pipeline parameters.
+data:
+  raw_path: data/raw/winequality-red.csv
+  test_size: 0.2
+  random_state: 42
+  drop_duplicates: true
+
+model:
+  n_estimators: 200
+  max_depth: 12
+  min_samples_leaf: 2
+  random_state: 42
+
+# Quality gate: a model that fails these is NOT saved / registered / deployed.
+# These are thresholds you choose, not measured results.
+quality_gate:
+  min_r2: 0.35
+  max_rmse: 0.75
+
+mlflow:
+  experiment_name: featureguard-wine-quality
+  registered_model_name: featureguard-wine-rf

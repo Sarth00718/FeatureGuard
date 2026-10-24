@@ -1,0 +1,28 @@
+# Reproduce everything with:  dvc repro
+# (the dataset itself is tracked with:  dvc add data/raw/winequality-red.csv)
+stages:
+  validate_data:
+    cmd: python -m ml.validate_data
+    deps:
+      - data/raw/winequality-red.csv
+      - ml/validate_data.py
+      - featureguard/validation.py
+  train:
+    cmd: python -m ml.train
+    deps:
+      - data/raw/winequality-red.csv
+      - ml/preprocessing.py
+      - ml/train.py
+      - ml/evaluate.py
+      - featureguard/validation.py
+    params:
+      - data
+      - model
+      - quality_gate
+    outs:
+      - models/model.joblib
+      - models/reference.csv
+      - models/metadata.json
+    metrics:
+      - reports/metrics.json:
+          cache: false

@@ -1,0 +1,72 @@
+schema: '2.0'
+stages:
+  validate_data:
+    cmd: python -m ml.validate_data
+    deps:
+    - path: data/raw/winequality-red.csv
+      hash: md5
+      md5: 2daeecee174368f8a33b82c8cccae3a5
+      size: 84199
+    - path: featureguard/validation.py
+      hash: md5
+      md5: 2d97541a50fadbe0b4f4fbbcee2d2356
+      size: 3231
+    - path: ml/validate_data.py
+      hash: md5
+      md5: 9d6af19ef5c6c639f412eb6d14b96755
+      size: 1782
+  train:
+    cmd: python -m ml.train
+    deps:
+    - path: data/raw/winequality-red.csv
+      hash: md5
+      md5: 2daeecee174368f8a33b82c8cccae3a5
+      size: 84199
+    - path: featureguard/validation.py
+      hash: md5
+      md5: 2d97541a50fadbe0b4f4fbbcee2d2356
+      size: 3231
+    - path: ml/evaluate.py
+      hash: md5
+      md5: 1067a0ab0842e41a05c5620144df7514
+      size: 1476
+    - path: ml/preprocessing.py
+      hash: md5
+      md5: 3aa7224d281819a7edc1bcc04e7e8847
+      size: 1549
+    - path: ml/train.py
+      hash: md5
+      md5: aef0f73a8cea32c698c67fb3e40ed8d1
+      size: 3958
+    params:
+      params.yaml:
+        data:
+          raw_path: data/raw/winequality-red.csv
+          test_size: 0.2
+          random_state: 42
+          drop_duplicates: true
+        model:
+          n_estimators: 200
+          max_depth: 12
+          min_samples_leaf: 2
+          random_state: 42
+        quality_gate:
+          min_r2: 0.35
+          max_rmse: 0.75
+    outs:
+    - path: models/metadata.json
+      hash: md5
+      md5: 3bf2a881a4486364803ef71b536c05e1
+      size: 747
+    - path: models/model.joblib
+      hash: md5
+      md5: e6baea8a0a79298ca3d7a6b9e0c93be5
+      size: 4910055
+    - path: models/reference.csv
+      hash: md5
+      md5: 49dc00d47cea10aa29e3def4827eafc3
+      size: 61505
+    - path: reports/metrics.json
+      hash: md5
+      md5: 78e41c0ca1fe1b85544f064172b76b24
+      size: 94

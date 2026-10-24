@@ -1,0 +1,7 @@
+# Full developer / CI environment (training + API + tests)
+-r backend/requirements.txt
+mlflow==2.16.2
+dvc==3.56.0
+pytest==8.3.4
+httpx==0.28.1
+requests==2.32.3

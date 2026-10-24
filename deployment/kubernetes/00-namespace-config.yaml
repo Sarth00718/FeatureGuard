@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: featureguard
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: featureguard-config
+  namespace: featureguard
+data:                     # non-sensitive settings
+  POSTGRES_HOST: postgres
+  POSTGRES_DB: featureguard
+  DRIFT_ENGINE: evidently
+  DRIFT_BATCH_SIZE: "30"
+  DRIFT_SHARE_THRESHOLD: "0.3"
+  LOG_LEVEL: INFO
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: featureguard-secret
+  namespace: featureguard
+type: Opaque
+stringData:               # DEMO values - change them. Do not commit real passwords.
+  POSTGRES_USER: featureguard
+  POSTGRES_PASSWORD: change-me-please
+  GRAFANA_PASSWORD: change-me-too

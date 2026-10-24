@@ -1,0 +1,65 @@
+# Nginx reverse proxy inside the cluster (same routing as Docker Compose).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: featureguard
+data:
+  default.conf: |
+    server {
+      listen 80;
+      location /api/ {
+        proxy_pass http://backend:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+      location / {
+        proxy_pass http://frontend:80;
+        proxy_set_header Host $host;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: featureguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: nginx}
+  template:
+    metadata:
+      labels: {app: nginx}
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports: [{containerPort: 80}]
+          readinessProbe:
+            httpGet: {path: /api/health, port: 80}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: 80}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - {name: conf, mountPath: /etc/nginx/conf.d}
+      volumes:
+        - name: conf
+          configMap: {name: nginx-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: featureguard
+spec:
+  type: LoadBalancer        # Docker Desktop: http://localhost ; Minikube: run "minikube service nginx -n featureguard"
+  selector: {app: nginx}
+  ports: [{port: 80, targetPort: 80}]
