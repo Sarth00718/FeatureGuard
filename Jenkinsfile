@@ -43,10 +43,20 @@ pipeline {
         // Install dependencies (Python venv + frontend npm)
         stage('Install dependencies') {
             steps {
-                bat '"%PYTHON%" -m venv "%VENV%"'
-                bat '"%VENV%\\Scripts\\python.exe" -m pip install -q -r requirements.txt'
+                // Reuse existing venv from project folder if available,
+                // otherwise create one. This avoids re-downloading packages on every build.
+                bat '''
+if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scripts\\python.exe" (
+    echo Copying existing venv from project folder...
+    xcopy /E /I /Q "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv" "%VENV%"
+) else (
+    echo Creating new venv...
+    "%PYTHON%" -m venv "%VENV%"
+    "%VENV%\\Scripts\\python.exe" -m pip install --timeout=120 --retries=5 -q -r requirements.txt
+)
+'''
                 dir('frontend') {
-                    bat 'npm install --no-audit --no-fund'
+                    bat 'npm install --no-audit --no-fund --prefer-offline'
                 }
             }
         }
