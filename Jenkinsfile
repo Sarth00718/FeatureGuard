@@ -179,9 +179,9 @@ echo POSTGRES_DB=featureguard>> .env.ci
             when { expression { params.DEPLOY_TARGET == 'kubernetes' } }
             steps {
                 withCredentials([file(credentialsId: 'featureguard-kube', variable: 'KUBECONFIG')]) {
-                    bat '"%KUBECTL%" apply -f deployment/kubernetes/00-namespace-config.yaml'
-                    bat '"%KUBECTL%" create configmap grafana-dashboards -n featureguard --from-file=monitoring/grafana/dashboards --dry-run=client -o yaml | "%KUBECTL%" apply -f -'
-                    bat '"%KUBECTL%" apply -f deployment/kubernetes/'
+                    bat '"%KUBECTL%" apply --validate=false -f deployment/kubernetes/00-namespace-config.yaml'
+                    bat '"%KUBECTL%" create configmap grafana-dashboards -n featureguard --from-file=monitoring/grafana/dashboards --dry-run=client -o yaml | "%KUBECTL%" apply --validate=false -f -'
+                    bat '"%KUBECTL%" apply --validate=false -f deployment/kubernetes/'
                     bat '"%KUBECTL%" -n featureguard set image deployment/backend  backend=featureguard-backend:%IMAGE_TAG%'
                     bat '"%KUBECTL%" -n featureguard set image deployment/frontend frontend=featureguard-frontend:%IMAGE_TAG%'
                     bat '"%KUBECTL%" -n featureguard rollout status deployment/backend  --timeout=180s || ("%KUBECTL%" -n featureguard rollout undo deployment/backend  & exit 1)'
