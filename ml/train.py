@@ -59,7 +59,7 @@ def main() -> int:
             return 1
 
         model_version = "unregistered"
-        mlflow.sklearn.log_model(pipeline, artifact_path="model")
+        mlflow.sklearn.log_model(pipeline, artifact_path="model", serialization_format="cloudpickle")
         result = mlflow.register_model(f"runs:/{run.info.run_id}/model",
                                        params["mlflow"]["registered_model_name"])
         model_version = str(result.version)
