@@ -29,3 +29,7 @@ reports/drift/
 
 # Kiro agent task files
 .agents/
+
+# CI smoke test artifacts
+smoke_payload.json
+.env.ci

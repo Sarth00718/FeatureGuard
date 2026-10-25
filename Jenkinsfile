@@ -126,23 +126,26 @@ echo POSTGRES_USER=featureguard>> .env.ci
 echo POSTGRES_PASSWORD=fg_smoke_pass>> .env.ci
 echo POSTGRES_DB=featureguard>> .env.ci
 '''
-                // Start only the services needed for smoke test - no mlflow/prometheus/grafana
+                // Write JSON payload to a file using Python - avoids Windows bat JSON escaping issues entirely
+                bat '"%VENV%\\Scripts\\python.exe" scripts/write_smoke_payload.py'
+
+                // Start smoke stack - only postgres, backend, frontend, nginx
                 bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
-                // Wait for backend to be fully ready (readiness probe passes)
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 --retry 10 --retry-delay 3 --retry-connrefused -fsS http://backend:8000/ready'
+
+                // Wait for backend readiness explicitly
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 --retry 15 --retry-delay 3 --retry-connrefused -fsS http://backend:8000/ready'
+
                 // Test 1: backend health directly
                 bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://backend:8000/health'
-                // Test 2: prediction via backend directly
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://backend:8000/predict'
-                // Test 3: nginx reverse proxy health
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://nginx/api/health'
-                // Test 4: full prediction through nginx
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://nginx/api/predict'
+
+                // Test 2: prediction through nginx using file payload (avoids JSON quoting issues)
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet -v "%WORKSPACE%/smoke_payload.json:/tmp/payload.json" curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d @/tmp/payload.json http://nginx/api/predict'
             }
             post {
                 always {
                     bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml down -v || exit 0'
                     bat 'if exist .env.ci del /f /q .env.ci || exit 0'
+                    bat 'if exist smoke_payload.json del /f /q smoke_payload.json || exit 0'
                 }
             }
         }
