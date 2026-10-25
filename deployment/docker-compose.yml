@@ -1,6 +1,5 @@
 # FeatureGuard stack - run from the repository root:
 #   docker compose --env-file .env -f deployment/docker-compose.yml up -d --build
-version: '3.8'
 
 services:
   postgres:
@@ -69,7 +68,6 @@ services:
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.16.2
-    container_name: featureguard-mlflow
     command: >
       mlflow server --host 0.0.0.0 --port 5000
       --backend-store-uri sqlite:////mlflow/mlflow.db
@@ -83,7 +81,6 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: featureguard-prometheus
     volumes:
       - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - promdata:/prometheus
@@ -96,7 +93,6 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.0
-    container_name: featureguard-grafana
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}

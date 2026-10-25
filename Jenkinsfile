@@ -46,16 +46,18 @@ pipeline {
         // Install dependencies (Python venv + frontend npm)
         stage('Install dependencies') {
             steps {
-                // Reuse existing venv from project folder to avoid re-downloading packages.
                 bat '''
-if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scripts\\python.exe" (
-    echo Copying existing venv from project folder...
+@echo off
+if exist "%VENV%\\Scripts\\python.exe" (
+    echo [INFO] Virtual environment already exists at %VENV%. Reusing...
+) else if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scripts\\python.exe" (
+    echo [INFO] Initializing workspace venv from project folder...
     xcopy /E /I /Q /Y "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv" "%VENV%"
 ) else (
-    echo Creating new venv...
+    echo [INFO] Creating clean virtual environment...
     "%PYTHON%" -m venv "%VENV%"
-    "%VENV%\\Scripts\\python.exe" -m pip install --timeout=120 --retries=5 -q -r requirements.txt
 )
+"%VENV%\\Scripts\\python.exe" -m pip install --timeout=120 --retries=5 -q -r requirements.txt
 '''
                 dir('frontend') {
                     bat 'npm install --no-audit --no-fund --prefer-offline'
@@ -66,7 +68,10 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
         // Python tests (validation, drift, ML, API)
         stage('Python tests (validation, drift, ML, API)') {
             steps {
-                bat '"%VENV%\\Scripts\\python.exe" -m pytest -q --junitxml=reports/pytest.xml'
+                bat '''
+if not exist reports mkdir reports
+"%VENV%\\Scripts\\python.exe" -m pytest -q --junitxml=reports/pytest.xml
+'''
             }
             post {
                 always {
@@ -99,26 +104,36 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
         // Build Docker images
         stage('Build Docker images') {
             steps {
-                bat '"%DOCKER%" build -t featureguard-backend:%IMAGE_TAG%  -f backend/Dockerfile .'
-                bat '"%DOCKER%" build -t featureguard-frontend:%IMAGE_TAG% frontend'
-                bat '"%DOCKER%" build -t featureguard-nginx:%IMAGE_TAG%    -f nginx/Dockerfile .'
+                bat '"%DOCKER%" build -t featureguard-backend:%IMAGE_TAG%  -t featureguard-backend:latest  -f backend/Dockerfile .'
+                bat '"%DOCKER%" build -t featureguard-frontend:%IMAGE_TAG% -t featureguard-frontend:latest frontend'
+                bat '"%DOCKER%" build -t featureguard-nginx:%IMAGE_TAG%    -t featureguard-nginx:latest    -f nginx/Dockerfile .'
             }
         }
 
         // Smoke test containers
         stage('Smoke test containers') {
             steps {
-                // Create throwaway env file with the current build tag so image names resolve
-                bat 'copy .env.example .env.ci'
-                bat 'echo IMAGE_TAG=%IMAGE_TAG%>> .env.ci'
+                // Create throwaway env file with current build tag and ephemeral port so it never clashes with host port 80
+                bat '''
+@echo off
+copy .env.example .env.ci >nul
+echo IMAGE_TAG=%IMAGE_TAG%>> .env.ci
+echo HTTP_PORT=0>> .env.ci
+'''
                 bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
-                // Curl directly to backend (port-mapped via compose network) to verify health + predict
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://fg-smoke-backend-1:8000/health'
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://fg-smoke-backend-1:8000/predict'
+                // 1. Verify backend health directly via internal network
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://backend:8000/health'
+                // 2. Verify prediction endpoint on backend directly
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -g -X POST -H "Content-Type: application/json" -d "{\\"fixed_acidity\\":7.4,\\"volatile_acidity\\":0.7,\\"citric_acid\\":0.0,\\"residual_sugar\\":1.9,\\"chlorides\\":0.076,\\"free_sulfur_dioxide\\":11,\\"total_sulfur_dioxide\\":34,\\"density\\":0.9978,\\"ph\\":3.51,\\"sulphates\\":0.56,\\"alcohol\\":9.4}" http://backend:8000/predict'
+                // 3. Verify reverse proxy routing through nginx
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://nginx/api/health'
+                // 4. Verify end-to-end prediction through nginx
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -g -X POST -H "Content-Type: application/json" -d "{\\"fixed_acidity\\":7.4,\\"volatile_acidity\\":0.7,\\"citric_acid\\":0.0,\\"residual_sugar\\":1.9,\\"chlorides\\":0.076,\\"free_sulfur_dioxide\\":11,\\"total_sulfur_dioxide\\":34,\\"density\\":0.9978,\\"ph\\":3.51,\\"sulphates\\":0.56,\\"alcohol\\":9.4}" http://nginx/api/predict'
             }
             post {
                 always {
                     bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml down -v || exit 0'
+                    bat 'if exist .env.ci del /f /q .env.ci || exit 0'
                 }
             }
         }
@@ -129,12 +144,15 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
             steps {
                 withCredentials([file(credentialsId: 'featureguard-env', variable: 'ENV_FILE')]) {
                     script {
-                        // remember the running tag so we can go back to it if verification fails
-                        def img = bat(returnStdout: true, script: '@"%DOCKER%" inspect --format "{{.Config.Image}}" featureguard-prod-backend-1 2>nul & exit /b 0')
-                        img = img.trim()
-                        env.PREV_TAG = img ? img.tokenize(':').last() : ''
+                        // Remember the running tag so we can roll back if verification fails
+                        def img = bat(returnStdout: true, script: '@"%DOCKER%" inspect --format "{{.Config.Image}}" featureguard-prod-backend-1 2>nul || echo none').trim()
+                        env.PREV_TAG = (img && img.contains(':')) ? img.tokenize(':').last() : ''
+                        echo "Previous running backend tag: ${env.PREV_TAG ?: 'none'}"
                     }
-                    bat '"%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d --build --wait --wait-timeout 180 postgres backend frontend nginx'
+                    // Gracefully stop any existing dev compose stack that might be occupying host port 80
+                    bat '"%COMPOSE%" -p deployment -f deployment/docker-compose.yml down 2>nul || exit 0'
+                    // Deploy the verified images using --no-build
+                    bat 'set "IMAGE_TAG=%IMAGE_TAG%" && "%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d --no-build --wait --wait-timeout 180 postgres backend frontend nginx'
                 }
             }
         }
@@ -174,21 +192,22 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
 
     post {
         success {
-            echo 'Pipeline succeeded. FeatureGuard is running.'
+            echo "Pipeline succeeded! FeatureGuard version ${IMAGE_TAG} has passed all gates and is running."
         }
         failure {
-            echo 'Build FAILED - nothing newer than the last good version was kept running by this pipeline.'
+            echo "Build FAILED - Triggering automated rollback if applicable."
             script {
                 // Compose rollback: bring the previous image tag back if the verify/deploy stage failed
                 if (params.DEPLOY_TARGET == 'compose' && env.PREV_TAG?.trim() && env.PREV_TAG != env.IMAGE_TAG) {
+                    echo "Rolling back compose deployment to previous tag: ${env.PREV_TAG}..."
                     withCredentials([file(credentialsId: 'featureguard-env', variable: 'ENV_FILE')]) {
-                        bat 'set "IMAGE_TAG=%PREV_TAG%" && "%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d postgres backend frontend nginx || exit 0'
+                        bat 'set "IMAGE_TAG=%PREV_TAG%" && "%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d --no-build postgres backend frontend nginx || exit 0'
                     }
                 }
             }
         }
         always {
-            bat 'if exist .env.ci del .env.ci'
+            bat 'if exist .env.ci del /f /q .env.ci || exit 0'
         }
     }
 }
