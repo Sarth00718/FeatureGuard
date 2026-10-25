@@ -43,12 +43,11 @@ pipeline {
         // Install dependencies (Python venv + frontend npm)
         stage('Install dependencies') {
             steps {
-                // Reuse existing venv from project folder if available,
-                // otherwise create one. This avoids re-downloading packages on every build.
+                // Reuse existing venv from project folder to avoid re-downloading packages.
                 bat '''
 if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scripts\\python.exe" (
     echo Copying existing venv from project folder...
-    xcopy /E /I /Q "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv" "%VENV%"
+    xcopy /E /I /Q /Y "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv" "%VENV%"
 ) else (
     echo Creating new venv...
     "%PYTHON%" -m venv "%VENV%"
