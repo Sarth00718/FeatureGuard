@@ -22,7 +22,7 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'DEPLOY_TARGET', choices: ['compose', 'kubernetes', 'none'], description: 'Where to deploy after all checks pass')
+        choice(name: 'DEPLOY_TARGET', choices: ['none', 'compose', 'kubernetes'], description: 'Where to deploy after all checks pass')
     }
 
     environment {
@@ -156,13 +156,18 @@ echo POSTGRES_DB=featureguard>> .env.ci
             steps {
                 withCredentials([file(credentialsId: 'featureguard-env', variable: 'ENV_FILE')]) {
                     script {
-                        // Remember the running tag so we can roll back if verification fails
-                        def img = bat(returnStdout: true, script: '@"%DOCKER%" inspect --format "{{.Config.Image}}" featureguard-prod-backend-1 2>nul || echo none').trim()
-                        env.PREV_TAG = (img && img.contains(':')) ? img.tokenize(':').last() : ''
+                        // Safely check if previous container exists and get its image tag for rollback
+                        def inspectStatus = bat(returnStatus: true, script: '@"%DOCKER%" inspect featureguard-prod-backend-1 >nul 2>&1')
+                        if (inspectStatus == 0) {
+                            def img = bat(returnStdout: true, script: '@"%DOCKER%" inspect --format "{{.Config.Image}}" featureguard-prod-backend-1').trim()
+                            env.PREV_TAG = (img && img.contains(':')) ? img.tokenize(':').last() : ''
+                        } else {
+                            env.PREV_TAG = ''
+                        }
                         echo "Previous running backend tag: ${env.PREV_TAG ?: 'none'}"
                     }
                     // Gracefully stop any existing dev compose stack that might be occupying host port 80
-                    bat '"%COMPOSE%" -p deployment -f deployment/docker-compose.yml down 2>nul || exit 0'
+                    bat(returnStatus: true, script: '@"%COMPOSE%" -p deployment -f deployment/docker-compose.yml down >nul 2>&1')
                     // Deploy the verified images using --no-build
                     bat 'set "IMAGE_TAG=%IMAGE_TAG%" && "%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d --no-build --wait --wait-timeout 180 postgres backend frontend nginx'
                 }
