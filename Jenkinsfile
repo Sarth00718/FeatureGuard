@@ -27,7 +27,8 @@ pipeline {
 
     environment {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        VENV = "${env.WORKSPACE}\\.venv"
+        VENV      = "${env.WORKSPACE}\\.venv"
+        PYTHON    = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
     }
 
     stages {
@@ -42,7 +43,7 @@ pipeline {
         // Install dependencies (Python venv + frontend npm)
         stage('Install dependencies') {
             steps {
-                bat 'python -m venv "%VENV%"'
+                bat '"%PYTHON%" -m venv "%VENV%"'
                 bat '"%VENV%\\Scripts\\python.exe" -m pip install -q -r requirements.txt'
                 dir('frontend') {
                     bat 'npm install --no-audit --no-fund'
