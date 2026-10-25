@@ -485,17 +485,17 @@ STEP 31  Add credentials to Jenkins
 
 STEP 32  Verify Jenkins PATH has required tools
 ─────────────────────────────────────────────────
-  Jenkins → Manage Jenkins → System
-  → Global properties → ✔ Environment variables → Add:
+  The Jenkinsfile defines tool locations in its environment block:
+    PYTHON  : C:\Users\SARTH\AppData\Local\Programs\Python\Python312\python.exe
+    DOCKER  : C:\Users\SARTH\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe
+    KUBECTL : C:\Users\SARTH\AppData\Local\Programs\DockerDesktop\resources\bin\kubectl.exe
 
-  Check each tool works from cmd:
+  Verify each tool works from PowerShell/cmd:
     python --version     →  3.11 or 3.12
     node --version       →  20+
     npm --version
     docker ps            →  Docker Desktop must be running
     kubectl version      →  (only for K8s deploy)
-
-  If any is missing, add its folder to the PATH environment variable in Jenkins.
 
 STEP 33  Create the Jenkins pipeline job
 ──────────────────────────────────────────
@@ -526,26 +526,29 @@ STEP 34  Run the pipeline
   Jenkins → FeatureGuard → Build with Parameters
 
   DEPLOY_TARGET options:
-    none       ← use this first time (runs all checks, no deploy)
+    none       ← use this first time (runs all checks, tests, smoke tests; no deploy)
     compose    ← deploys to Docker Compose after all checks pass
     kubernetes ← deploys to Kubernetes after all checks pass
 
   Pipeline stages:
-    1  Checkout              pulls code from GitHub
-    2  Install dependencies  python -m venv, pip install, npm install
-    3  Python tests          pytest → reports\pytest.xml  (published in Jenkins)
-    4  Frontend tests+build  npm test → npm run build
-    5  Train model           download_data → validate_data → ml.train
-                             QUALITY GATE: exits 1 if R2 or RMSE fail thresholds
-                             → build marked FAILED, no Docker image is built
-    6  Build Docker images   featureguard-backend/frontend/nginx:%BUILD_NUMBER%
-    7  Smoke test            spins up throw-away compose stack (-p fg-smoke)
-                             curls /api/health and POST /api/predict, tears it down
-    8  Deploy                compose OR kubectl set image + rollout status
-    9  Verify health         curl /api/ready OR kubectl rollout status
+    1   Checkout                         pulls code from GitHub
+    2   Install dependencies             python -m venv, pip install, npm ci
+    3   Python tests                     pytest -q --junitxml=reports\pytest.xml
+    4   Frontend tests and build         vitest unit tests, vite production build
+    5   Train model and validate quality download_data → validate_data → ml.train
+                                         QUALITY GATE: fails build if R2/RMSE fail thresholds
+                                         → build marked FAILED, no Docker image is deployed
+    6   Build Docker images              featureguard-backend/frontend/nginx:%BUILD_NUMBER%
+    7   Smoke test                       spins up isolated compose stack (-p fg-smoke) on port 18081
+                                         curls backend and nginx health endpoints, tears down
+    8   Deploy with Docker Compose       deploys verified images using docker compose (when DEPLOY_TARGET=compose)
+    9   Deploy to Kubernetes             applies manifests & rolling update in namespace featureguard (when DEPLOY_TARGET=kubernetes)
+    10  Verify deployment                verifies /api/ready (compose) OR kubectl pod status & rollout (kubernetes)
 
-  ON FAILURE:
-    post { failure } rolls compose back to PREV_TAG automatically.
+  POST ACTIONS:
+    always  : cleans up temporary .env.ci
+    success : prints confirmation with build tag
+    failure : reports failure for immediate inspection
 
 ================================================================================
 SECTION 8 – KUBERNETES  (Practical 9 + 10)
@@ -859,7 +862,7 @@ PROJECT FILE MAP
 
   dvc.yaml                   DVC pipeline stages: validate_data → train
   params.yaml                hyperparams + quality gate thresholds
-  Jenkinsfile                CI/CD: 9 stages, Windows bat, quality gate, rollback
+  Jenkinsfile                CI/CD: 10 stages, Windows bat, quality gate, smoke test, deploy, rollback
   requirements.txt           full dev environment (backend + mlflow + dvc + pytest)
   backend\requirements.txt   runtime only (fastapi, uvicorn, sqlalchemy, etc.)
   .env.example               template — copy to .env and never commit .env
