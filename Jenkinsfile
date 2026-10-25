@@ -113,12 +113,22 @@ if not exist reports mkdir reports
         // Smoke test containers
         stage('Smoke test containers') {
             steps {
-                // Create throwaway env file with current build tag and ephemeral port so it never clashes with host port 80
+                // Create a temporary smoke-test environment with non-production credentials and non-default host ports.
+                // docker-compose.yml must use ${HTTP_PORT:-80}:80 for nginx and ${PROMETHEUS_PORT:-9090}:9090 for Prometheus.
                 bat '''
 @echo off
-copy .env.example .env.ci >nul
+if exist .env.ci del /f /q .env.ci
+if exist .env.example (
+    copy .env.example .env.ci >nul
+) else (
+    type nul > .env.ci
+)
 echo IMAGE_TAG=%IMAGE_TAG%>> .env.ci
-echo HTTP_PORT=0>> .env.ci
+echo HTTP_PORT=8081>> .env.ci
+echo POSTGRES_USER=featureguard>> .env.ci
+echo POSTGRES_PASSWORD=fg_smoke_local_2026>> .env.ci
+echo POSTGRES_DB=featureguard>> .env.ci
+echo PROMETHEUS_PORT=9091>> .env.ci
 '''
                 bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
                 // 1. Verify backend health directly via internal network
