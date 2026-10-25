@@ -31,6 +31,7 @@ pipeline {
         PYTHON       = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
         DOCKER       = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe"
         COMPOSE      = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker-compose.exe"
+        KUBECTL      = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\kubectl.exe"
     }
 
     stages {
@@ -140,15 +141,13 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
             when { expression { params.DEPLOY_TARGET == 'kubernetes' } }
             steps {
                 withCredentials([file(credentialsId: 'featureguard-kube', variable: 'KUBECONFIG')]) {
-                    bat '''
-kubectl apply -f deployment/kubernetes/00-namespace-config.yaml
-kubectl create configmap grafana-dashboards -n featureguard --from-file=monitoring/grafana/dashboards --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f deployment/kubernetes/
-kubectl -n featureguard set image deployment/backend  backend=featureguard-backend:%IMAGE_TAG%
-kubectl -n featureguard set image deployment/frontend frontend=featureguard-frontend:%IMAGE_TAG%
-kubectl -n featureguard rollout status deployment/backend  --timeout=180s || (kubectl -n featureguard rollout undo deployment/backend  & exit 1)
-kubectl -n featureguard rollout status deployment/frontend --timeout=120s || (kubectl -n featureguard rollout undo deployment/frontend & exit 1)
-'''
+                    bat '"%KUBECTL%" apply -f deployment/kubernetes/00-namespace-config.yaml'
+                    bat '"%KUBECTL%" create configmap grafana-dashboards -n featureguard --from-file=monitoring/grafana/dashboards --dry-run=client -o yaml | "%KUBECTL%" apply -f -'
+                    bat '"%KUBECTL%" apply -f deployment/kubernetes/'
+                    bat '"%KUBECTL%" -n featureguard set image deployment/backend  backend=featureguard-backend:%IMAGE_TAG%'
+                    bat '"%KUBECTL%" -n featureguard set image deployment/frontend frontend=featureguard-frontend:%IMAGE_TAG%'
+                    bat '"%KUBECTL%" -n featureguard rollout status deployment/backend  --timeout=180s || ("%KUBECTL%" -n featureguard rollout undo deployment/backend  & exit 1)'
+                    bat '"%KUBECTL%" -n featureguard rollout status deployment/frontend --timeout=120s || ("%KUBECTL%" -n featureguard rollout undo deployment/frontend & exit 1)'
                 }
             }
         }
@@ -162,7 +161,7 @@ kubectl -n featureguard rollout status deployment/frontend --timeout=120s || (ku
                         bat '"%DOCKER%" run --rm --network featureguard-prod_appnet curlimages/curl:8.10.1 -fsS --retry 10 --retry-delay 3 --retry-connrefused http://nginx/api/ready'
                     } else {
                         withCredentials([file(credentialsId: 'featureguard-kube', variable: 'KUBECONFIG')]) {
-                            bat 'kubectl -n featureguard get pods && kubectl -n featureguard rollout status deployment/nginx --timeout=60s'
+                            bat '"%KUBECTL%" -n featureguard get pods && "%KUBECTL%" -n featureguard rollout status deployment/nginx --timeout=60s'
                         }
                     }
                 }
