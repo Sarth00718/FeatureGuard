@@ -12,12 +12,20 @@ def database_url() -> str:
     url = os.getenv("DATABASE_URL")
     if url:
         return url
-    # Production: always PostgreSQL via Docker Compose
+
     user = os.getenv("POSTGRES_USER", "featureguard")
     password = os.getenv("POSTGRES_PASSWORD", "mlopsfeatureguard")
     host = os.getenv("POSTGRES_HOST", "localhost")
-    port = os.getenv("POSTGRES_PORT", "5432")
     name = os.getenv("POSTGRES_DB", "featureguard")
+
+    # POSTGRES_PORT is injected by Kubernetes as "tcp://10.x.x.x:5432"
+    # We always use 5432 — extract only the numeric port if needed.
+    raw_port = os.getenv("POSTGRES_PORT", "5432")
+    if raw_port.startswith("tcp://"):
+        port = "5432"
+    else:
+        port = raw_port
+
     return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
 
 

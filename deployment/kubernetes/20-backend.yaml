@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: backend
-          image: featureguard-backend:1.0.0     # built locally; imagePullPolicy IfNotPresent
-          imagePullPolicy: IfNotPresent
+          image: featureguard-backend:1.0.0
+          imagePullPolicy: Always
           ports: [{containerPort: 8000}]
           envFrom:
             - configMapRef: {name: featureguard-config}
