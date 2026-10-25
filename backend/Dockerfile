@@ -13,7 +13,10 @@ COPY ml/ ml/
 COPY featureguard/ featureguard/
 COPY models/ models/
 
-RUN useradd -m appuser && mkdir -p reports/drift && chown -R appuser /app
+RUN useradd -m appuser \
+    && mkdir -p reports/drift \
+    && chown -R appuser /app
+
 USER appuser
 
 ENV PYTHONUNBUFFERED=1

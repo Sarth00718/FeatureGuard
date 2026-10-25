@@ -1,496 +1,866 @@
 ================================================================================
   FEATUREGUARD – STEP BY STEP EXECUTION GUIDE
-  MLOps project covering Practicals 1-10
+  All commands run in PowerShell from the project root unless stated otherwise.
+  Project root: C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
 ================================================================================
 
-WHAT THIS PROJECT DEMONSTRATES
-────────────────────────────────
-  P1  Git / GitHub          – version control, .gitignore, .env not committed
-  P2  Deployment            – FastAPI (replaces Flask), Nginx reverse proxy
-  P3  Containerisation      – Dockerfile (single + multistage), Docker Compose,
-                              volumes, named networks (driver: bridge), depends_on
-  P4  ML Pipeline           – sklearn Pipeline (scaler + RandomForest), DVC stages
-  P5  CI/CD (Jenkins)       – Declarative pipeline, Windows bat steps, quality gate,
-                              smoke test, deploy, explicit rollback on failure
-  P6  MLflow                – experiment tracking, model registry, quality gate
-  P7  Prometheus            – /metrics endpoint, custom counters + histogram scraped
-  P8  Grafana               – provisioned dashboard (no manual import needed)
-  P9  Kubernetes (deploy)   – Deployments, Services, ConfigMap, Ingress, probes
-  P10 Kubernetes (rollback) – rollout undo, rollback-demo.ps1
+PRACTICALS COVERED
+──────────────────
+  P1  Git / GitHub      version control, .gitignore, .env not committed
+  P2  Deployment        FastAPI + uvicorn + Nginx reverse proxy
+  P3  Containerisation  Dockerfile (single + multistage), Docker Compose,
+                        named volumes, named network (driver:bridge), depends_on
+  P4  ML Pipeline       sklearn Pipeline (StandardScaler + RandomForest), DVC
+  P5  CI/CD             Jenkins declarative pipeline, Windows bat, quality gate,
+                        smoke test, deploy, explicit rollback on failure
+  P6  MLflow            experiment tracking, model registry, quality gate
+  P7  Prometheus        custom metrics endpoint, scrape config, counters+histogram
+  P8  Grafana           provisioned datasource + dashboard (no manual import)
+  P9  Kubernetes        Deployments, Services, PVC, ConfigMap, probes, rolling update
+  P10 Kubernetes        rollout history, rollout undo (explicit rollback)
+
+PREREQUISITES  (install once, then skip)
+─────────────────────────────────────────
+  Python 3.11 or 3.12    https://python.org
+  Node.js 20+            https://nodejs.org
+  Git                    https://git-scm.com
+  Docker Desktop         https://docker.com/products/docker-desktop
+  DVC                    pip install dvc
+  kubectl (K8s only)     https://kubernetes.io/docs/tasks/tools/
 
 ================================================================================
-PREREQUISITES  (install once)
+SECTION 1 – FIRST-TIME SETUP
 ================================================================================
 
-  ✔ Python 3.11 or 3.12   https://python.org
-  ✔ Node.js 20+            https://nodejs.org
-  ✔ Docker Desktop (with Compose v2 and, optionally, Kubernetes enabled)
-  ✔ DVC                    pip install dvc
-  ✔ kubectl (if using K8s) https://kubernetes.io/docs/tasks/tools/
+STEP 1  Go to the project folder
+─────────────────────────────────
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
 
-================================================================================
-PHASE 0 – PROJECT SETUP
-================================================================================
-
-Step 0-A  Copy the example environment file
-───────────────────────────────────────────
-  cd FeatureGuard
+STEP 2  Copy the environment file
+──────────────────────────────────
   copy .env.example .env
 
-  The .env file is git-ignored (Practical 1 / Practical 5 credential hygiene).
-  Edit it if you want to change passwords or ports (defaults work fine locally).
-
-  Key variables:
+  The .env is git-ignored — it never goes to GitHub.
+  Passwords already set in .env:
     POSTGRES_USER     = featureguard
-    POSTGRES_PASSWORD = featureguard
+    POSTGRES_PASSWORD = mlopsfeatureguard
     POSTGRES_DB       = featureguard
-    HTTP_PORT         = 80          (the port Nginx listens on)
-    MLFLOW_PORT       = 5000
-    GRAFANA_PORT      = 3000
+    GRAFANA_USER      = admin
+    GRAFANA_PASSWORD  = mlopsadmin
 
-Step 0-B  Create a Python virtual environment
-─────────────────────────────────────────────
+STEP 3  Create Python virtual environment
+──────────────────────────────────────────
   python -m venv .venv
-  .venv\Scripts\activate              # Windows
-
+  .venv\Scripts\activate
   pip install -r requirements.txt
 
+  Verify:  python --version   →  3.11.x or 3.12.x
+
 ================================================================================
-PHASE 1 – ML PIPELINE  (Practical 4 + 6)
+SECTION 2 – ML PIPELINE  (Practical 4 + 6)
 ================================================================================
 
-Step 1-A  Download the dataset (DVC-tracked, Practical 4)
-──────────────────────────────────────────────────────────
+STEP 4  Download the dataset
+──────────────────────────────
   python ml\download_data.py
 
-  → writes data\raw\winequality-red.csv
-  This file is DVC-tracked (data\raw\winequality-red.csv.dvc); only the pointer
-  goes into git, not the data itself (Practical 1 large-file hygiene).
+  Output:  data\raw\winequality-red.csv
+  This file is DVC-tracked via data\raw\winequality-red.csv.dvc
+  The CSV itself is git-ignored — only the .dvc pointer is committed.
 
-Step 1-B  Validate the data schema
-───────────────────────────────────
+STEP 5  Validate the data
+──────────────────────────
   python -m ml.validate_data
 
-  → checks that all 12 expected columns are present and numeric.
-  Exits with code 1 if the schema is wrong (fail-fast before training).
+  Expected output:  "Data validation passed for data/raw/winequality-red.csv"
+  Exit code 1 = schema problem, do not proceed until this passes.
 
-Step 1-C  Run the full DVC pipeline (train + evaluate)
-──────────────────────────────────────────────────────
-  dvc repro
+STEP 6  Train the model  (logs to MLflow, applies quality gate)
+────────────────────────────────────────────────────────────────
+  python -m ml.train
 
-  Stages defined in dvc.yaml:
-    validate_data  →  ml/validate_data.py
-    preprocess     →  ml/preprocessing.py   (builds reference.csv for drift)
-    train          →  ml/train.py           (logs to MLflow, saves models/)
-    evaluate       →  ml/evaluate.py        (quality gate: min_r2, max_rmse)
+  What happens:
+    1. Loads data\raw\winequality-red.csv
+    2. Splits into train / test (80/20, random_state=42)
+    3. Trains StandardScaler + RandomForestRegressor pipeline
+    4. Evaluates MAE, RMSE, R2 on the test split
+    5. QUALITY GATE: if R2 < 0.35 or RMSE > 0.75  →  exits with code 1
+       (nothing saved, Jenkins will not build or deploy)
+    6. Logs params + metrics to MLflow  (mlflow.db / experiment: featureguard-wine-quality)
+    7. Registers model in MLflow registry  (alias: approved)
+    8. Saves to models\  →  model.joblib, metadata.json, reference.csv
 
-  Alternatively run training directly:
-    python -m ml.train
+  Verify after training:
+    dir models\
+    →  model.joblib   metadata.json   reference.csv   .gitkeep
 
-  QUALITY GATE: if the trained model is below the thresholds in params.yaml
-  (min_r2=0.45, max_rmse=0.80) the script exits with code 1 and Jenkins will
-  not build or deploy. This is Practical 5 / 6 integration.
+  To re-evaluate without retraining:
+    python -m ml.evaluate
 
-  MLflow UI (Practical 6):
-    mlflow ui --backend-store-uri sqlite:///mlflow.db
-    → open http://localhost:5000 to see runs, params, metrics, model registry.
+  To run the full DVC pipeline (only re-runs changed stages):
+    dvc repro
 
-  After training you should see:
-    models\model.joblib
-    models\metadata.json
-    models\reference.csv
+STEP 7  View MLflow results  (Practical 6)
+───────────────────────────────────────────
+  mlflow ui --backend-store-uri sqlite:///mlflow.db
 
-================================================================================
-PHASE 2 – LOCAL DEVELOPMENT SERVER  (Practical 2)
-================================================================================
+  Open http://localhost:5000
+    Experiments tab  → featureguard-wine-quality  → click the latest run
+    See: params (n_estimators, max_depth, test_size, random_state)
+         metrics (mae, rmse, r2)
+         artifacts (model/)
+    Models tab  →  featureguard-wine-rf  →  version 1  →  alias: approved
 
-  Activate your venv if not already done, then:
-
-  python -m backend.app.main
-
-  → uvicorn starts on http://localhost:8000 (the if __name__ == "__main__" block,
-    same pattern as the practicals' "python app.py").
-
-  Test with curl or browser:
-    GET  http://localhost:8000/health
-    GET  http://localhost:8000/ready
-    GET  http://localhost:8000/model/metrics
-    POST http://localhost:8000/predict
-         Body (JSON):
-           {"fixed_acidity":7.4,"volatile_acidity":0.7,"citric_acid":0.0,
-            "residual_sugar":1.9,"chlorides":0.076,"free_sulfur_dioxide":11,
-            "total_sulfur_dioxide":34,"density":0.9978,"ph":3.51,
-            "sulphates":0.56,"alcohol":9.4}
-
-  NOTE: PostgreSQL is NOT running locally yet; the API starts in "degraded"
-  mode and logs a warning. Use Docker Compose (Phase 3) for the full stack.
+  Press Ctrl+C to stop the MLflow UI when done.
 
 ================================================================================
-PHASE 3 – DOCKER COMPOSE  (Practical 3 + 7 + 8)
+SECTION 3 – DOCKER COMPOSE  (Practical 2 + 3 + 7 + 8)
 ================================================================================
 
-Step 3-A  Build and start all services
-───────────────────────────────────────
-  From the repository root:
-
+STEP 8  Build and start the full stack
+────────────────────────────────────────
   docker compose --env-file .env -f deployment\docker-compose.yml up -d --build
 
-  Services started (Practical 3 – multi-service Compose):
-    postgres       – PostgreSQL 16 (named volume pgdata, healthcheck)
-    backend        – FastAPI / uvicorn  (depends_on postgres healthy)
-    frontend       – React SPA (multistage build: node → nginx)
-    nginx          – Reverse proxy  (port 80 → frontend / backend)
-    mlflow         – MLflow tracking server  (port 5000)
-    prometheus     – Metrics scraper  (port 9090)
-    grafana        – Dashboards  (port 3000, auto-provisioned)
+  NOTE: models\ must exist before this runs (Step 6 builds it).
+        The backend Dockerfile copies models\ into the image.
 
-  Named network: appnet  (driver: bridge) – Practical 3 networking concept.
-  Named volumes: pgdata, mlflowdata, promdata, grafanadata, jenkinshome
-                 – Practical 3 volume persistence concept.
+  Services started:
+    featureguard-postgres   PostgreSQL 16       named volume pgdata
+    backend                 FastAPI/uvicorn     port 8000 (internal)
+    frontend                React/Vite/nginx    port 80  (internal)
+    nginx                   Reverse proxy       port 80  → http://localhost
+    featureguard-mlflow     MLflow server       port 5000
+    featureguard-prometheus Prometheus          port 9090
+    featureguard-grafana    Grafana             port 3000
 
-Step 3-B  Verify everything is up
-──────────────────────────────────
+  Network:  appnet  (driver: bridge)
+  Volumes:  pgdata  mlflowdata  promdata  grafanadata
+
+STEP 9  Verify all services are running
+─────────────────────────────────────────
   docker compose -f deployment\docker-compose.yml ps
 
-  All services should show "healthy" or "running".
+  Expected status:
+    postgres    →  healthy
+    backend     →  running
+    frontend    →  running
+    nginx       →  healthy
+    mlflow      →  running
+    prometheus  →  running
+    grafana     →  running
 
-Step 3-C  Open the application
+  If backend is restarting: the model is missing. Run Step 6 then rebuild:
+    docker compose --env-file .env -f deployment\docker-compose.yml up -d --build backend
+
+STEP 10  Open the application
 ───────────────────────────────
-  Browser → http://localhost/           React frontend via Nginx
-  Browser → http://localhost/api/health FastAPI health (Nginx strips /api/)
-  Browser → http://localhost:5000       MLflow UI
-  Browser → http://localhost:9090       Prometheus (query: featureguard_*)
-  Browser → http://localhost:3000       Grafana  (admin/admin → FeatureGuard dashboard)
+  http://localhost/           →  React frontend (via Nginx)
+  http://localhost/api/docs   →  FastAPI Swagger UI
+  http://localhost/api/health →  JSON health status
+  http://localhost:5000       →  MLflow UI
+  http://localhost:9090       →  Prometheus
+  http://localhost:3000       →  Grafana  (admin / mlopsadmin)
 
-Step 3-D  Make predictions and watch metrics
-────────────────────────────────────────────
-  Use the React UI at http://localhost/ – fill in the wine features and click Predict.
-
-  Or POST directly:
-    curl -X POST http://localhost/api/predict ^
-         -H "Content-Type: application/json" ^
-         -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}"
-
-  Send ~30 requests to trigger a drift batch check.
-  Prometheus → Grafana shows counters updating in real time (Practical 7 + 8).
-
-Step 3-E  Trigger drift detection manually
-───────────────────────────────────────────
-  curl -X POST http://localhost/api/drift/check
-
-  → runs the KS-test batch comparison against reference.csv; result visible in
-    the Grafana dashboard and at GET /api/drift/alerts.
-
-Step 3-F  Tear down
-────────────────────
-  docker compose -f deployment\docker-compose.yml down      # keep volumes
-  docker compose -f deployment\docker-compose.yml down -v   # also delete volumes
-
-================================================================================
-PHASE 3-B – PUSH TO GITHUB  (Practical 1 + 5)
-================================================================================
-
-  Do this ONCE before setting up the Jenkins job.
-
-Step G-1  Create a GitHub repository
+STEP 11  Make predictions – React UI
 ──────────────────────────────────────
-  1. Go to https://github.com/new
-  2. Repository name : FeatureGuard
-  3. Visibility      : Public or Private (your choice)
-  4. Do NOT initialise with README / .gitignore / licence (repo must be empty)
-  5. Click "Create repository"
-  6. Copy the HTTPS URL, e.g. https://github.com/Sarth00718/FeatureGuard.git
+  Open http://localhost/
+  Click the  Predict  tab
+  Fill in the wine feature values (example values load automatically)
+  Click  Predict
+  Result appears below the form: "Predicted quality: 5.4 (about 5/10)"
+  Check the  Dashboard  tab — Total requests increases by 1.
 
-Step G-2  Create a GitHub Personal Access Token (PAT)
+STEP 12  Send normal traffic (35 real dataset rows)
+────────────────────────────────────────────────────
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode normal --count 35
+
+  What it does:
+    - Reads 35 random rows from data\raw\winequality-red.csv
+    - POSTs each row to http://localhost/api/predict
+    - Prints: "Sent 35 requests: 35 accepted, 0 rejected"
+
+  After this:
+    Open http://localhost/ → Dashboard tab
+    → Total requests = 35, Accepted = 35, Rejected = 0
+    → Drift alerts = 1  (35 > 30 batch size → drift check ran automatically)
+
+STEP 13  Send invalid requests (test validation rejection)
+───────────────────────────────────────────────────────────
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode invalid --count 3
+
+  What it does:
+    - Sends 3 requests with alcohol = 99.0 (outside allowed range [5.0, 20.0])
+    - Each is rejected with HTTP 422
+    - Prints: "First rejection: 422 {...}"
+    - Prints: "Sent 3 requests: 0 accepted, 3 rejected"
+
+  After this:
+    Open http://localhost/ → Dashboard tab
+    → Rejected by validation increases by 3
+    Open History tab → rows show validation_status = rejected
+
+STEP 14  Send drift traffic (simulate distribution shift)
+───────────────────────────────────────────────────────────
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode drift --count 35
+
+  What it does:
+    - Sends 35 rows with shifted feature values (more alcohol, more sulfur
+      dioxide, higher pH, etc.) — all still pass validation (within hard limits)
+    - After 30 accepted rows the drift check fires and compares this batch
+      against the training reference data → drift IS detected
+    - Prints: "Sent 35 requests: 35 accepted, 0 rejected"
+
+  After this:
+    Open http://localhost/ → Alerts tab
+    → New drift alert appears with drift_detected = true
+    → Shows which features drifted (alcohol, total_sulfur_dioxide, etc.)
+
+  To trigger a drift check manually without waiting for 30 requests:
+    Invoke-RestMethod -Uri "http://localhost/api/drift/check" -Method Post
+
+STEP 14-B  Run all three modes in sequence (full demo)
 ───────────────────────────────────────────────────────
-  GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-  → Generate new token (classic)
-    Note     : Jenkins-FeatureGuard
-    Expiry   : 90 days (or No expiration for a demo machine)
-    Scopes   : ✔ repo  (full repo access — needed so Jenkins can clone)
-  → Generate token → COPY IT NOW (shown only once)
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
 
-Step G-3  Initialise git and push
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode normal  --count 35
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode invalid --count 3
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode drift   --count 35
+
+  Then open http://localhost/ and check:
+    Dashboard  → Total requests ~73, Accepted ~70, Rejected 3, Drift alerts 2+
+    History    → mix of accepted and rejected rows
+    Alerts     → drift alert from the drift batch
+    Grafana    → http://localhost:3000 → all panels show data
+
+STEP 15  Tear down Docker Compose
 ───────────────────────────────────
-  Open PowerShell, cd to the project:
+  # Stop containers but KEEP data volumes:
+  docker compose -f deployment\docker-compose.yml down
 
-    cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
-
-    git init
-    git branch -M main
-
-    # Stage everything (.gitignore already excludes .env, models/, mlruns/, dev.db, etc.)
-    git add .
-    git status          # review — confirm .env is NOT listed
-
-    git commit -m "Initial commit - FeatureGuard MLOps project"
-
-    git remote add origin https://github.com/Sarth00718/FeatureGuard.git
-
-    git push -u origin main
-      # Enter your GitHub username when prompted
-      # Enter your PAT as the password (not your GitHub password)
-
-  After the push, verify at https://github.com/Sarth00718/FeatureGuard that:
-    ✔ Jenkinsfile is in the root
-    ✔ .env is NOT present (only .env.example)
-    ✔ models/ is NOT present
-    ✔ node_modules/ is NOT present
-
-Step G-4  Future pushes (trigger a new Jenkins build)
-───────────────────────────────────────────────────────
-    git add <changed files>
-    git commit -m "description of change"
-    git push origin main
-
-  Jenkins polls every 5 min (Poll SCM trigger) and starts a new build
-  automatically when it detects a new commit — same as scenario3_github.
+  # Stop containers AND delete all data (clean slate):
+  docker compose -f deployment\docker-compose.yml down -v
 
 ================================================================================
-PHASE 4 – JENKINS CI/CD PIPELINE  (Practical 5 scenario3 – GitHub SCM)
+SECTION 4 – PROMETHEUS  (Practical 7)
 ================================================================================
 
-  Your Jenkins is already running locally at http://localhost:8080.
-  The Jenkins Docker container in docker-compose.yml has been removed to avoid
-  a port conflict. You do NOT need to start any extra service for Jenkins.
+STEP 16  Verify Prometheus is scraping the backend
+────────────────────────────────────────────────────
+  Compose must be running (Step 8).
 
-Step 4-A  Install required Jenkins plugins  (skip if already installed)
+  Open http://localhost:9090
+
+  A)  Status → Targets
+      Expect:  featureguard-api   Endpoint: http://backend:8000/metrics   State: UP
+      If DOWN: backend is still starting — wait 30s and refresh.
+
+  B)  Status → Configuration
+      Shows the scrape config loaded from monitoring\prometheus.yml:
+        job_name: featureguard-api
+        metrics_path: /metrics
+        scrape_interval: 10s
+        targets: ["backend:8000"]
+
+  C)  Raw metrics endpoint:
+      http://localhost/api/metrics
+      Scroll through — look for lines starting with "featureguard_"
+
+STEP 17  Run Prometheus queries
+─────────────────────────────────
+  Open http://localhost:9090 → click Graph tab
+
+  Paste each query, click Execute:
+
+  Query 1 – total predictions made:
+    featureguard_prediction_requests_total
+
+  Query 2 – requests per minute:
+    rate(featureguard_prediction_requests_total[5m]) * 60
+
+  Query 3 – p95 response time (seconds):
+    histogram_quantile(0.95,
+      sum(rate(featureguard_request_latency_seconds_bucket[5m])) by (le)
+    )
+
+  Query 4 – validation rejections:
+    featureguard_validation_rejections_total
+
+  Query 5 – drift alerts:
+    featureguard_drift_alerts_total
+
+  Query 6 – is the app and model alive?
+    featureguard_app_up
+    featureguard_model_loaded
+
+STEP 18  Metrics reference  (backend\app\metrics.py)
+──────────────────────────────────────────────────────
+  Metric                                    Type       What it counts
+  ─────────────────────────────────────── ─────────  ──────────────────────────
+  featureguard_prediction_requests_total    Counter    every POST /predict call
+  featureguard_prediction_failures_total    Counter    server errors on /predict
+  featureguard_validation_rejections_total  Counter    inputs rejected (HTTP 422)
+  featureguard_drift_checks_total           Counter    batch drift checks run
+  featureguard_drift_alerts_total           Counter    batches where drift found
+  featureguard_app_up                       Gauge      1 while process is alive
+  featureguard_model_loaded                 Gauge      1 when model.joblib loaded
+  featureguard_request_latency_seconds      Histogram  latency per method + path
+
+================================================================================
+SECTION 5 – GRAFANA  (Practical 8)
+================================================================================
+
+STEP 19  Open Grafana
+──────────────────────
+  Open http://localhost:3000
+  Username : admin
+  Password : mlopsadmin
+
+STEP 20  Verify the datasource (auto-provisioned)
+───────────────────────────────────────────────────
+  Connections → Data sources
+  → "Prometheus" is listed as the default datasource
+  → URL: http://prometheus:9090
+
+  Click Prometheus → scroll down → click  "Save & test"
+  Expected:  "Successfully queried the Prometheus API."
+
+  This datasource was created automatically from:
+    monitoring\grafana\provisioning\datasources\prometheus.yml
+  You never need to add it manually.
+
+STEP 21  Open the FeatureGuard dashboard
+──────────────────────────────────────────
+  Dashboards → Browse
+  → Click  "FeatureGuard - Application metrics"
+
+  If it does NOT appear:
+    Dashboards → Browse → New → Import
+    Upload:  monitoring\grafana\dashboards\featureguard.json
+    Select datasource: Prometheus → Import
+
+  The dashboard was auto-loaded from:
+    monitoring\grafana\dashboards\featureguard.json
+    monitoring\grafana\provisioning\dashboards\dashboards.yml
+
+STEP 22  Dashboard panels
+──────────────────────────
+  Panel                          Query used
+  ─────────────────────────────  ─────────────────────────────────────────────
+  Request volume (req/min)       rate(featureguard_prediction_requests_total[5m]) * 60
+  API latency  p50 / p95         histogram_quantile(0.95/0.50, latency_bucket[5m])
+  Prediction error rate          failures / requests
+  Validation rejections (total)  featureguard_validation_rejections_total
+  Drift alerts (total)           featureguard_drift_alerts_total
+  App health (up + model)        featureguard_app_up  /  featureguard_model_loaded
+
+  Auto-refresh: every 10 seconds
+  Time range: top-right picker → select "Last 30 minutes"
+
+STEP 23  Watch metrics update live
+────────────────────────────────────
+  With Grafana open in one browser tab, run the simulator in PowerShell:
+
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode normal --count 35
+
+  Switch back to Grafana — the Request volume panel rises in real time.
+
+  Then run drift mode to see the Drift alerts panel increment:
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode drift --count 35
+
+  How provisioning works:
+    monitoring\prometheus.yml                         → mounted into Prometheus container
+    monitoring\grafana\provisioning\datasources\*.yml → auto-creates Prometheus datasource
+    monitoring\grafana\provisioning\dashboards\*.yml  → tells Grafana where to load dashboards
+    monitoring\grafana\dashboards\featureguard.json   → the dashboard itself (6 panels)
+    All mounts defined in deployment\docker-compose.yml under the grafana service.
+
+================================================================================
+SECTION 6 – GIT + GITHUB  (Practical 1)
+================================================================================
+
+STEP 24  Initialise git
+─────────────────────────
+  cd C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard
+  git init
+  git branch -M main
+
+STEP 25  Stage and commit
+──────────────────────────
+  git add .
+  git status
+  # Confirm .env is NOT listed (it is git-ignored)
+  # Confirm models\  is NOT listed (git-ignored)
+  # Confirm node_modules\ is NOT listed (git-ignored)
+
+  git commit -m "Initial commit - FeatureGuard MLOps project"
+
+STEP 26  Create a GitHub Personal Access Token (PAT)
+──────────────────────────────────────────────────────
+  GitHub → Settings → Developer settings
+         → Personal access tokens → Tokens (classic)
+         → Generate new token (classic)
+
+  Settings:
+    Note   : Jenkins-FeatureGuard
+    Expiry : 90 days (or No expiration for demo)
+    Scopes : ✔ repo
+
+  Click Generate token → COPY the token NOW (shown only once).
+
+STEP 27  Create an empty GitHub repository
+────────────────────────────────────────────
+  https://github.com/new
+    Name        : FeatureGuard
+    Visibility  : Public or Private
+    ⚠  Do NOT tick "Add README", "Add .gitignore" or "Choose a license"
+       (repo must be completely empty)
+  Click Create repository.
+  Copy the HTTPS URL shown, e.g.:
+    https://github.com/Sarth00718/FeatureGuard.git
+
+STEP 28  Push to GitHub
+─────────────────────────
+  git remote add origin https://github.com/Sarth00718/FeatureGuard.git
+  git push -u origin main
+  # Username: your GitHub username
+  # Password: the PAT from Step 26  (NOT your GitHub account password)
+
+  Verify at https://github.com/Sarth00718/FeatureGuard:
+    ✔ Jenkinsfile visible in root
+    ✔ .env NOT present  (only .env.example)
+    ✔ models\  NOT present
+    ✔ node_modules\  NOT present
+
+STEP 29  Future commits (trigger Jenkins build automatically)
+──────────────────────────────────────────────────────────────
+  git add <changed-files>
+  git commit -m "your change description"
+  git push origin main
+
+  Jenkins polls GitHub every 5 minutes and starts a new build automatically.
+
+================================================================================
+SECTION 7 – JENKINS CI/CD  (Practical 5)
+================================================================================
+
+  Your Jenkins runs locally at http://localhost:8080
+  No Docker Jenkins container is used.
+
+STEP 30  Install required Jenkins plugins  (skip if already installed)
 ────────────────────────────────────────────────────────────────────────
   Jenkins → Manage Jenkins → Plugins → Available plugins
-  Search and install (restart Jenkins after):
-    ✔ Pipeline               (if not already present)
-    ✔ Pipeline: Stage View   (shows stage-by-stage UI)
-    ✔ Git                    (SCM integration)
-    ✔ JUnit                  (publishes pytest.xml results)
-    ✔ Credentials Binding    (withCredentials step)
+  Install each, then restart Jenkins:
+    Pipeline
+    Pipeline: Stage View
+    Git
+    JUnit
+    Credentials Binding
 
-Step 4-B  Add credentials to Jenkins
-──────────────────────────────────────
-  Jenkins → Manage Jenkins → Credentials → System → Global credentials → Add
+STEP 31  Add credentials to Jenkins
+─────────────────────────────────────
+  Jenkins → Manage Jenkins → Credentials
+          → System → Global credentials (unrestricted) → Add Credentials
 
-  ID                   Kind                  Value
-  ─────────────────    ──────────────────    ────────────────────────────────────
-  github-pat           Username+password     Username = your GitHub username
-                                             Password = your PAT (from Step G-2)
-  featureguard-env     Secret file           your FeatureGuard\.env (real passwords)
-  featureguard-kube    Secret file           %USERPROFILE%\.kube\config
-                                             (only needed for DEPLOY_TARGET=kubernetes)
+  Add these three credentials:
 
-Step 4-C  Create the pipeline job
-──────────────────────────────────
-  GitHub (like Practical 5 scenario3 – Pipeline Script from SCM):
+  Credential 1:
+    Kind     : Username with password
+    ID       : github-pat
+    Username : your GitHub username
+    Password : your PAT from Step 26
 
-    Jenkins → New Item → type "Pipeline" → name "FeatureGuard" → OK
+  Credential 2:
+    Kind : Secret file
+    ID   : featureguard-env
+    File : browse to  C:\Users\SARTH\OneDrive\Desktop\MLOps\FeatureGuard\.env
 
-    Under "Pipeline":
-      Definition     : Pipeline script from SCM
-      SCM            : Git
-      Repository URL : https://github.com/<YOUR_USERNAME>/FeatureGuard.git
-      Credentials    : github-pat   (the credential you added above)
-      Branch         : */main
-      Script Path    : Jenkinsfile
+  Credential 3 (only needed for Kubernetes deploy):
+    Kind : Secret file
+    ID   : featureguard-kube
+    File : browse to  C:\Users\SARTH\.kube\config
 
-    Under "Build Triggers":
-      ✔ Poll SCM  →  Schedule: H/5 * * * *
-        (Jenkins checks GitHub every 5 minutes for new commits)
+STEP 32  Verify Jenkins PATH has required tools
+─────────────────────────────────────────────────
+  Jenkins → Manage Jenkins → System
+  → Global properties → ✔ Environment variables → Add:
 
-    Save.
+  Check each tool works from cmd:
+    python --version     →  3.11 or 3.12
+    node --version       →  20+
+    npm --version
+    docker ps            →  Docker Desktop must be running
+    kubectl version      →  (only for K8s deploy)
 
-Step 4-D  Configure the Jenkins workspace path
-───────────────────────────────────────────────
-  The Jenkinsfile uses %WORKSPACE% and runs bat steps — this works natively on
-  your Windows Jenkins agent with no extra configuration.
+  If any is missing, add its folder to the PATH environment variable in Jenkins.
 
-  Make sure the Jenkins agent has these on its PATH:
-    ✔ python  (python --version → 3.11 or 3.12)
-    ✔ node    (node --version  → 20+)
-    ✔ npm
-    ✔ docker  (Docker Desktop running; docker ps works from cmd.exe)
-    ✔ kubectl (only for DEPLOY_TARGET=kubernetes)
+STEP 33  Create the Jenkins pipeline job
+──────────────────────────────────────────
+  Jenkins → New Item
+    Name : FeatureGuard
+    Type : Pipeline
+  → OK
 
-  To check: Jenkins → Manage Jenkins → System → Global properties
-  → Environment variables → add PATH entries if needed.
+  General:
+    ✔ This project is parameterised  (already in Jenkinsfile, auto-detected)
 
-Step 4-E  Run the pipeline
+  Pipeline section:
+    Definition     : Pipeline script from SCM
+    SCM            : Git
+    Repository URL : https://github.com/Sarth00718/FeatureGuard.git
+    Credentials    : github-pat
+    Branch         : */main
+    Script Path    : Jenkinsfile
+
+  Build Triggers:
+    ✔ Poll SCM
+    Schedule : H/5 * * * *
+
+  → Save
+
+STEP 34  Run the pipeline
 ───────────────────────────
   Jenkins → FeatureGuard → Build with Parameters
 
-  Choose DEPLOY_TARGET:
-    none       – runs all checks (tests, quality gate, smoke test) without deploying
-                 ← start here the first time
-    compose    – deploys the full stack to Docker Compose after all checks pass
-    kubernetes – deploys to the K8s cluster after all checks pass
+  DEPLOY_TARGET options:
+    none       ← use this first time (runs all checks, no deploy)
+    compose    ← deploys to Docker Compose after all checks pass
+    kubernetes ← deploys to Kubernetes after all checks pass
 
-  Pipeline stages (all use Windows bat):
-    1. Checkout             – checkout scm (SCM options) or workspace files (paste option)
-    2. Install dependencies – python -m venv .venv, pip install, npm install
-    3. Python tests         – pytest → reports\pytest.xml (published to Jenkins)
-    4. Frontend tests+build – npm test && npm run build
-    5. Train model          – download_data → validate_data → ml.train
-                              QUALITY GATE: exits 1 if MAE/RMSE/R2 fail thresholds
-                              → Jenkins marks build FAILED, no image is built
-    6. Build Docker images  – featureguard-backend/frontend/nginx:%BUILD_NUMBER%
-    7. Smoke test           – spins up a throw-away compose stack (-p fg-smoke),
-                              curls /api/health and POST /api/predict, tears it down
-    8. Deploy (compose)     – docker compose up -d with your real .env
-       Deploy (kubernetes)  – kubectl set image + rollout status + auto-undo on fail
-    9. Verify service health– curl /api/ready (compose) or rollout status (k8s)
+  Pipeline stages:
+    1  Checkout              pulls code from GitHub
+    2  Install dependencies  python -m venv, pip install, npm install
+    3  Python tests          pytest → reports\pytest.xml  (published in Jenkins)
+    4  Frontend tests+build  npm test → npm run build
+    5  Train model           download_data → validate_data → ml.train
+                             QUALITY GATE: exits 1 if R2 or RMSE fail thresholds
+                             → build marked FAILED, no Docker image is built
+    6  Build Docker images   featureguard-backend/frontend/nginx:%BUILD_NUMBER%
+    7  Smoke test            spins up throw-away compose stack (-p fg-smoke)
+                             curls /api/health and POST /api/predict, tears it down
+    8  Deploy                compose OR kubectl set image + rollout status
+    9  Verify health         curl /api/ready OR kubectl rollout status
 
-  ON FAILURE: post { failure } block rolls compose back to PREV_TAG automatically
-              (the image that was serving before this build started).
+  ON FAILURE:
+    post { failure } rolls compose back to PREV_TAG automatically.
 
 ================================================================================
-PHASE 5 – KUBERNETES  (Practical 9 + 10)
+SECTION 8 – KUBERNETES  (Practical 9 + 10)
 ================================================================================
 
-  Prerequisites: kubectl configured, Docker Desktop K8s enabled (or minikube).
+  PREREQUISITE:
+    Docker Desktop → Settings → Kubernetes → ✔ Enable Kubernetes → Apply & Restart
+    Wait for bottom-left status:  "Kubernetes running"
 
-Step 5-A  Tag and load images into the cluster
-───────────────────────────────────────────────
-  After building (Phase 3 or Jenkins), tag the images your K8s manifests expect:
+    Verify context:
+      kubectl config current-context
+      → must print:  docker-desktop
 
-  docker tag featureguard-backend:latest  featureguard-backend:v1
-  docker tag featureguard-frontend:latest featureguard-frontend:v1
-  docker tag featureguard-nginx:latest    featureguard-nginx:v1
+    If it shows something else:
+      kubectl config use-context docker-desktop
 
-  If using minikube:  eval $(minikube docker-env)   and rebuild inside it.
+  All commands run from the project root.
+  Images built with docker build are immediately visible to Docker Desktop K8s.
+  No registry push is needed.
 
-Step 5-B  Deploy with the helper script
+STEP 35  Train and build images  (if not done already)
+────────────────────────────────────────────────────────
+  python ml\download_data.py
+  python -m ml.train
+
+  docker build -t featureguard-backend:1.0.0  -f backend\Dockerfile .
+  docker build -t featureguard-frontend:1.0.0 frontend
+
+  Verify:
+    docker images | findstr featureguard
+
+  NOTE: Kubernetes nginx uses a plain nginx:1.27-alpine image with its config
+  injected via ConfigMap (40-nginx.yaml). You do NOT need to build the
+  featureguard-nginx image for Kubernetes. That image is only used by Compose.
+
+STEP 36  Create namespace, ConfigMap and Secret
+─────────────────────────────────────────────────
+  kubectl apply -f deployment\kubernetes\00-namespace-config.yaml
+
+  Verify:
+    kubectl get namespace featureguard
+    kubectl -n featureguard get configmap featureguard-config
+    kubectl -n featureguard get secret featureguard-secret
+
+  Passwords in 00-namespace-config.yaml match your .env:
+    POSTGRES_USER     = featureguard
+    POSTGRES_PASSWORD = mlopsfeatureguard
+    GRAFANA_PASSWORD  = mlopsadmin
+
+STEP 37  Create Grafana dashboard ConfigMap
+────────────────────────────────────────────
+  kubectl create configmap grafana-dashboards `
+    -n featureguard `
+    --from-file=monitoring\grafana\dashboards `
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  Verify:
+    kubectl -n featureguard get configmap grafana-dashboards
+
+STEP 38  Deploy all services
+──────────────────────────────
+  kubectl apply -f deployment\kubernetes\10-postgres.yaml
+  kubectl apply -f deployment\kubernetes\20-backend.yaml
+  kubectl apply -f deployment\kubernetes\30-frontend.yaml
+  kubectl apply -f deployment\kubernetes\40-nginx.yaml
+  kubectl apply -f deployment\kubernetes\50-monitoring.yaml
+
+  What each manifest creates:
+    10-postgres.yaml    Deployment (Recreate strategy), Service, PVC 1Gi
+    20-backend.yaml     Deployment (2 replicas, maxUnavailable:0)
+                        readinessProbe GET /ready port 8000
+                        livenessProbe  GET /health port 8000
+    30-frontend.yaml    Deployment (1 replica), ClusterIP Service
+    40-nginx.yaml       Deployment, LoadBalancer Service port 80
+                        /api/ → backend:8000  (prefix stripped)
+                        /     → frontend:80
+    50-monitoring.yaml  Prometheus ClusterIP, Grafana LoadBalancer port 3000
+
+STEP 39  Set image tags
+────────────────────────
+  kubectl -n featureguard set image deployment/backend  backend=featureguard-backend:1.0.0
+  kubectl -n featureguard set image deployment/frontend frontend=featureguard-frontend:1.0.0
+
+STEP 40  Wait for rollouts
+───────────────────────────
+  kubectl -n featureguard rollout status deployment/postgres  --timeout=120s
+  kubectl -n featureguard rollout status deployment/backend   --timeout=180s
+  kubectl -n featureguard rollout status deployment/frontend  --timeout=120s
+  kubectl -n featureguard rollout status deployment/nginx     --timeout=60s
+
+STEP 41  Verify pods and services
+───────────────────────────────────
+  kubectl -n featureguard get pods
+
+  Expected (all Running/Ready):
+    postgres-xxx      1/1  Running
+    backend-xxx       1/2  Running   ← 2 replicas
+    backend-yyy       2/2  Running
+    frontend-xxx      1/1  Running
+    nginx-xxx         1/1  Running
+    prometheus-xxx    1/1  Running
+    grafana-xxx       1/1  Running
+
+  kubectl -n featureguard get services
+
+  Expected:
+    NAME        TYPE          EXTERNAL-IP  PORT(S)
+    postgres    ClusterIP     <none>       5432
+    backend     ClusterIP     <none>       8000
+    frontend    ClusterIP     <none>       80
+    nginx       LoadBalancer  localhost    80
+    prometheus  ClusterIP     <none>       9090
+    grafana     LoadBalancer  localhost    3000
+
+STEP 42  Access the application
+─────────────────────────────────
+  http://localhost/           →  React frontend
+  http://localhost/api/health →  API health
+  http://localhost/api/docs   →  Swagger UI
+  http://localhost:3000       →  Grafana  (admin / mlopsadmin)
+
+  Prometheus is ClusterIP — use port-forward to access it:
+    kubectl -n featureguard port-forward svc/prometheus 9090:9090
+    → http://localhost:9090
+
+──────────────────────────────────────────────────────────────────────────────
+ROLLING UPDATE DEMO  (Practical 9)
+──────────────────────────────────────────────────────────────────────────────
+
+STEP 43  Build a new version
+──────────────────────────────
+  docker build -t featureguard-backend:2.0.0 -f backend\Dockerfile .
+
+STEP 44  Trigger the rolling update
+─────────────────────────────────────
+  kubectl -n featureguard set image deployment/backend backend=featureguard-backend:2.0.0
+
+  maxUnavailable: 0 means old pods keep serving until new pod passes readiness.
+  Zero downtime.
+
+STEP 45  Watch it live (open a second PowerShell window)
+──────────────────────────────────────────────────────────
+  kubectl -n featureguard rollout status deployment/backend
+
+STEP 46  Check rollout history
+────────────────────────────────
+  kubectl -n featureguard rollout history deployment/backend
+
+  Shows revision 1 → 1.0.0, revision 2 → 2.0.0
+
+──────────────────────────────────────────────────────────────────────────────
+ROLLBACK DEMO  (Practical 10)
+──────────────────────────────────────────────────────────────────────────────
+
+STEP 47  Check history before rollback
 ────────────────────────────────────────
-  cd deployment\kubernetes
-  powershell -ExecutionPolicy Bypass -File deploy.ps1
+  kubectl -n featureguard rollout history deployment/backend
 
-  This applies manifests in numeric order:
-    00-namespace-config.yaml  – Namespace + ResourceQuota + LimitRange
-    10-postgres.yaml          – StatefulSet, Service, PVC
-    20-backend.yaml           – Deployment (2 replicas), Service, liveness+readiness
-    30-frontend.yaml          – Deployment, Service
-    40-nginx.yaml             – Deployment, Service (NodePort 30080)
-    50-monitoring.yaml        – Prometheus + Grafana Deployments + Services
+STEP 48  Deploy a BROKEN release (image does not exist)
+─────────────────────────────────────────────────────────
+  kubectl -n featureguard set image deployment/backend backend=featureguard-backend:broken
 
-Step 5-C  Access the application
+STEP 49  Watch the rollout stall
 ──────────────────────────────────
-  http://localhost:30080         (NodePort via Nginx)
-  kubectl -n featureguard get pods        – should all be Running/Ready
+  kubectl -n featureguard rollout status deployment/backend --timeout=40s
 
-  Liveness probe  → GET /health  (restarts the pod if it fails)
-  Readiness probe → GET /ready   (removes from Service if DB or model unavailable)
+  Expected:  "error: timed out waiting for the condition"
+  Because maxUnavailable:0 → old pods KEEP SERVING. No outage.
 
-Step 5-D  Rolling update demo
-───────────────────────────────
-  Build a new image:
-    docker build -t featureguard-backend:v2 -f backend/Dockerfile .
-
-  Trigger a rolling update (zero downtime because maxUnavailable: 0):
-    kubectl -n featureguard set image deployment/backend backend=featureguard-backend:v2
-    kubectl -n featureguard rollout status deployment/backend
-
-Step 5-E  Rollback demo  (Practical 10)
+STEP 50  Confirm old pods still running
 ─────────────────────────────────────────
-  powershell -ExecutionPolicy Bypass -File deployment\kubernetes\rollback-demo.ps1
+  kubectl -n featureguard get pods -l app=backend
 
-  The script demonstrates:
-    1. Deploy a "bad" v3 image that fails readiness (simulated)
-    2. Rollout stalls (old pods keep serving because maxUnavailable: 0)
-    3. kubectl rollout undo deployment/backend  → returns to v2
-    4. Verify pods are Running again
+  Expected:
+    backend-<old>   2/2  Running         ← still serving
+    backend-<new>   0/1  ImagePullBackOff ← stuck, never Ready
 
-  NOTE: Kubernetes does NOT roll back automatically. The Jenkinsfile does it
-  explicitly when `rollout status` times out (stage 'Deploy (kubernetes)').
+STEP 51  Roll back
+────────────────────
+  kubectl -n featureguard rollout undo deployment/backend
+
+STEP 52  Confirm rollback is complete
+───────────────────────────────────────
+  kubectl -n featureguard rollout status deployment/backend --timeout=120s
+  kubectl -n featureguard get pods -l app=backend
+  kubectl -n featureguard rollout history deployment/backend
+
+  All pods Running. History shows revision 3 pointing back to previous good image.
+
+  KEY POINT: Kubernetes NEVER rolls back automatically.
+  The rollout stalls while old pods keep serving.
+  You must run "rollout undo" explicitly.
+  The Jenkinsfile also does this automatically when rollout status times out.
+
+──────────────────────────────────────────────────────────────────────────────
+KUBERNETES DEBUG COMMANDS
+──────────────────────────────────────────────────────────────────────────────
+
+  # See events + probe failures for a specific pod
+  kubectl -n featureguard describe pod <pod-name>
+
+  # Live logs from backend pods
+  kubectl -n featureguard logs -l app=backend -f
+
+  # Live logs from nginx
+  kubectl -n featureguard logs -l app=nginx -f
+
+  # Access backend directly (bypass nginx)
+  kubectl -n featureguard port-forward svc/backend 8000:8000
+  # then: curl http://localhost:8000/health
+
+  # Access Prometheus
+  kubectl -n featureguard port-forward svc/prometheus 9090:9090
+  # then: http://localhost:9090
+
+  # Check postgres storage is bound
+  kubectl -n featureguard get pvc
+
+STEP 53  Tear down Kubernetes
+───────────────────────────────
+  kubectl delete -f deployment\kubernetes\50-monitoring.yaml
+  kubectl delete -f deployment\kubernetes\40-nginx.yaml
+  kubectl delete -f deployment\kubernetes\30-frontend.yaml
+  kubectl delete -f deployment\kubernetes\20-backend.yaml
+  kubectl delete -f deployment\kubernetes\10-postgres.yaml
+
+  # OR delete everything at once (removes PVC data too):
+  kubectl delete namespace featureguard
 
 ================================================================================
-PHASE 6 – MONITORING DETAIL  (Practical 7 + 8)
+QUICK REFERENCE
 ================================================================================
 
-Prometheus metrics exposed at GET /api/metrics (or /metrics direct on port 8000):
-  featureguard_prediction_requests_total    – all POST /predict calls
-  featureguard_prediction_failures_total    – server errors on predict
-  featureguard_validation_rejections_total  – inputs rejected by hard rules
-  featureguard_drift_checks_total           – batch drift checks run
-  featureguard_drift_alerts_total           – batches where drift was detected
-  featureguard_request_latency_seconds      – histogram (method, path)
-  featureguard_app_up                       – 1 while process alive
-  featureguard_model_loaded                 – 1 when model.joblib is loaded
+  COMMAND                                              PURPOSE
+  ───────────────────────────────────────────────────  ─────────────────────────
+  python ml\download_data.py                           download dataset
+  python -m ml.validate_data                           validate schema
+  python -m ml.train                                   train + quality gate
+  python -m ml.evaluate                                re-evaluate saved model
+  dvc repro                                            full DVC pipeline
+  mlflow ui --backend-store-uri sqlite:///mlflow.db    view MLflow locally
 
-Prometheus scrape config: monitoring\prometheus.yml  (10s interval)
-Grafana dashboard: monitoring\grafana\dashboards\featureguard.json
-  → auto-provisioned on first start; no manual import needed.
-  → shows: RPS, p99 latency, rejection rate, drift alert count, model metrics.
+  .venv\Scripts\python.exe -m scripts.simulate_traffic                  35 normal requests
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode invalid   3 rejected requests
+  .venv\Scripts\python.exe -m scripts.simulate_traffic --mode drift     35 drifted requests
 
-Grafana login: http://localhost:3000  admin / admin
+  docker compose --env-file .env \                     start full stack
+    -f deployment\docker-compose.yml up -d --build
+  docker compose -f deployment\docker-compose.yml ps   check status
+  docker compose -f deployment\docker-compose.yml down stop (keep data)
+  docker compose -f deployment\docker-compose.yml \    stop + delete data
+    down -v
+
+  kubectl apply -f deployment\kubernetes\<file>        apply one manifest
+  kubectl -n featureguard get pods                     list pods
+  kubectl -n featureguard get services                 list services
+  kubectl -n featureguard rollout status \             watch rollout
+    deployment/backend
+  kubectl -n featureguard rollout undo \               roll back
+    deployment/backend
+  kubectl delete namespace featureguard                tear down K8s
 
 ================================================================================
 PROJECT FILE MAP
 ================================================================================
 
   ml\
-    download_data.py      download raw CSV
-    validate_data.py      schema check (fail-fast)
-    preprocessing.py      build reference.csv for drift
-    train.py              train RandomForest, log to MLflow, quality gate
-    evaluate.py           compute MAE/RMSE/R2 on test split
-    predict.py            ModelService (load joblib, predict)
+    download_data.py         download raw CSV from UCI
+    validate_data.py         schema check, fail-fast before training
+    preprocessing.py         load data, split, build sklearn Pipeline
+    train.py                 train + MLflow log + quality gate + save
+    evaluate.py              compute MAE/RMSE/R2 on test split
+    predict.py               ModelService class (loads joblib, runs predict)
 
   featureguard\
-    validation.py         hard per-request rules (fields, types, ranges)
-    drift_monitor.py      KS-test batch drift detection (Evidently optional)
+    validation.py            hard per-request rules (fields, types, ranges)
+    drift_monitor.py         KS-test / Evidently batch drift detection
 
   backend\app\
-    main.py               FastAPI routes, middleware, lifespan
-    config.py             env-var config (MODEL_DIR, DB URL, etc.)
-    db.py                 SQLAlchemy models: Prediction, DriftAlert
-    metrics.py            prometheus_client counters + histogram
+    main.py                  FastAPI routes + middleware + lifespan
+    config.py                env-var config (PostgreSQL URL, MODEL_DIR, etc.)
+    db.py                    SQLAlchemy models: Prediction, DriftAlert
+    metrics.py               Prometheus counters + histogram definitions
 
   frontend\src\
-    App.jsx               React UI (predict form, history, drift, model tabs)
-    api.js                fetch wrappers for all backend endpoints
-    features.js           wine feature metadata (names, ranges, tooltips)
+    App.jsx                  React UI (Dashboard/Predict/History/Model/Alerts/Health)
+    api.js                   fetch wrappers for all backend endpoints
+    features.js              wine feature definitions (names, ranges, example values)
 
-  nginx\nginx.conf        reverse proxy: / → frontend, /api/ → backend (stripped)
-  frontend\nginx.conf     SPA try_files $uri /index.html
+  nginx\
+    nginx.conf               reverse proxy: /api/ → backend:8000, / → frontend:80
+    Dockerfile               FROM nginx:1.27-alpine, COPY nginx.conf
+
+  frontend\
+    nginx.conf               SPA server block: try_files $uri /index.html
+    Dockerfile               multistage: node:20-alpine builds, nginx:1.27-alpine serves
 
   deployment\
-    docker-compose.yml    all services, version '3.8', named network bridge
-    kubernetes\           00..50 manifests + deploy.ps1 + rollback-demo.ps1
-    jenkins\Dockerfile    Jenkins image with Docker CLI
+    docker-compose.yml       all 7 services, version 3.8, appnet bridge network
+    kubernetes\              00-namespace  10-postgres  20-backend  30-frontend
+                             40-nginx  50-monitoring
 
   monitoring\
-    prometheus.yml        scrape config
-    grafana\              dashboard JSON + provisioning YAMLs
+    prometheus.yml                              scrape config (10s, backend:8000)
+    grafana\provisioning\datasources\*.yml      auto-creates Prometheus datasource
+    grafana\provisioning\dashboards\*.yml       auto-loads dashboard JSON
+    grafana\dashboards\featureguard.json        6-panel dashboard definition
 
-  dvc.yaml                4-stage pipeline definition
-  params.yaml             hyperparams + quality gate thresholds
-  Jenkinsfile             CI/CD (declarative, Windows bat steps)
+  database\
+    init.sql                 reference schema (predictions + drift_alerts tables)
 
-================================================================================
-QUICK REFERENCE – COMMON COMMANDS
-================================================================================
-
-  # Full local stack (from repo root)
-  docker compose --env-file .env -f deployment\docker-compose.yml up -d --build
-
-  # Retrain only
-  python -m ml.train
-
-  # DVC full pipeline
-  dvc repro
-
-  # Run backend locally (requires .env loaded or defaults used)
-  python -m backend.app.main
-
-  # Run all tests
-  python -m pytest -v
-
-  # Tear down (keep data)
-  docker compose -f deployment\docker-compose.yml down
-
-  # Tear down (delete data)
-  docker compose -f deployment\docker-compose.yml down -v
-
-  # K8s deploy
-  powershell -File deployment\kubernetes\deploy.ps1
-
-  # K8s rollback
-  kubectl -n featureguard rollout undo deployment/backend
-
+  dvc.yaml                   DVC pipeline stages: validate_data → train
+  params.yaml                hyperparams + quality gate thresholds
+  Jenkinsfile                CI/CD: 9 stages, Windows bat, quality gate, rollback
+  requirements.txt           full dev environment (backend + mlflow + dvc + pytest)
+  backend\requirements.txt   runtime only (fastapi, uvicorn, sqlalchemy, etc.)
+  .env.example               template — copy to .env and never commit .env
 ================================================================================

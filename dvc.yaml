@@ -7,18 +7,21 @@ stages:
       - data/raw/winequality-red.csv
       - ml/validate_data.py
       - featureguard/validation.py
+
   train:
     cmd: python -m ml.train
     deps:
       - data/raw/winequality-red.csv
-      - ml/preprocessing.py
       - ml/train.py
+      - ml/preprocessing.py
       - ml/evaluate.py
+      - ml/validate_data.py
       - featureguard/validation.py
     params:
       - data
       - model
       - quality_gate
+      - mlflow
     outs:
       - models/model.joblib
       - models/reference.csv

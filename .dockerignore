@@ -1,12 +1,43 @@
+# Exclude everything that is not needed in any Docker build context.
+# The backend image needs: backend/ ml/ featureguard/ models/
+# The nginx image needs:   nginx/nginx.conf
+# Everything else is excluded to keep the build context small and fast.
+
 .git
+.gitignore
 .env
-.venv
-venv
-node_modules
-frontend
-data
-mlruns
+.env.example
+.dvcignore
+.venv/
+venv/
+
+# Frontend is built in its own context (frontend/Dockerfile)
+frontend/
+
+# Data, experiment tracking, reports - not needed in the image
+data/
+mlruns/
 mlflow.db
-tests
-docs
-__pycache__
+dev.db
+reports/
+.agents/
+
+# Deployment and config files - not needed inside the image
+deployment/
+monitoring/
+database/
+scripts/
+docs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Tests
+tests/

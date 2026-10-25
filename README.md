@@ -37,12 +37,9 @@ If scripts are blocked: `Set-ExecutionPolicy -Scope Process Bypass`.
 ### 2. Dataset and DVC
 ```powershell
 python ml/download_data.py          # or download winequality-red.csv manually into data/raw/
-git init                            # skip if already a git repo
-dvc init
-dvc add data/raw/winequality-red.csv
-git add data/raw/winequality-red.csv.dvc data/raw/.gitignore .dvc dvc.yaml params.yaml
 ```
-`data/raw/winequality-red.csv` is git-ignored on purpose; DVC tracks it (`dvc add` also writes its own `.gitignore`).
+DVC is already initialised (`.dvcignore`, `dvc.yaml`, `data/raw/winequality-red.csv.dvc` are in the repo).
+`data/raw/winequality-red.csv` is git-ignored; DVC tracks it via the `.dvc` pointer file.
 
 ### 3. Train (one command)
 ```powershell
@@ -59,16 +56,7 @@ python -m pytest -q
 cd frontend; npm install; npm test; cd ..
 ```
 
-### 5. Run without Docker (development)
-You need a PostgreSQL (or any SQLAlchemy URL). Quick local option with SQLite:
-```powershell
-$env:DATABASE_URL="sqlite:///dev.db"
-uvicorn backend.app.main:app --reload --port 8000
-# second terminal
-cd frontend; npm install; npm run dev        # http://localhost:5173 (proxies /api to :8000)
-```
-
-### 6. Run everything with Docker Compose
+### 5. Run with Docker Compose (required — PostgreSQL runs in Docker)
 ```powershell
 Copy-Item .env.example .env        # then edit the passwords in .env
 docker compose --env-file .env -f deployment/docker-compose.yml up -d --build
@@ -76,18 +64,34 @@ docker compose --env-file .env -f deployment/docker-compose.yml ps
 ```
 The model must already be trained (step 3): it is copied into the backend image.
 Open http://localhost (app), http://localhost/api/docs (API docs), http://localhost:3000 (Grafana), http://localhost:9090 (Prometheus), http://localhost:5000 (MLflow).
+All API calls go through Nginx on port 80 — always use `http://localhost/api/...` not `localhost:8000`.
 Stop: `docker compose --env-file .env -f deployment/docker-compose.yml down` (add `-v` to delete the data volumes).
 Jenkins runs locally on your machine at http://localhost:8080.
 Push this repo to GitHub and configure Jenkins with "Pipeline script from SCM" → your repo URL + `github-pat` credential + branch `*/main` + Script Path `Jenkinsfile`. Set Poll SCM trigger `H/5 * * * *`. See `STEP_BY_STEP_EXECUTION.txt` Phase 3-B and Phase 4 for the full walkthrough.
 
 ### 7. Kubernetes (Docker Desktop with Kubernetes enabled, or Minikube)
 ```powershell
-powershell -ExecutionPolicy Bypass -File deployment/kubernetes/deploy.ps1 -Tag 1.0.0
+# Build images
+docker build -t featureguard-backend:1.0.0  -f backend/Dockerfile .
+docker build -t featureguard-frontend:1.0.0 frontend
+docker build -t featureguard-nginx:1.0.0    -f nginx/Dockerfile .
+
+# Deploy
+kubectl apply -f deployment/kubernetes/00-namespace-config.yaml
+kubectl create configmap grafana-dashboards -n featureguard --from-file=monitoring/grafana/dashboards --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f deployment/kubernetes/10-postgres.yaml
+kubectl apply -f deployment/kubernetes/20-backend.yaml
+kubectl apply -f deployment/kubernetes/30-frontend.yaml
+kubectl apply -f deployment/kubernetes/40-nginx.yaml
+kubectl apply -f deployment/kubernetes/50-monitoring.yaml
+kubectl -n featureguard set image deployment/backend  backend=featureguard-backend:1.0.0
+kubectl -n featureguard set image deployment/frontend frontend=featureguard-frontend:1.0.0
+kubectl -n featureguard rollout status deployment/backend  --timeout=180s
 kubectl -n featureguard get pods
 ```
-Stop Compose first if it uses port 80/3000. Rollback demonstration: `deployment/kubernetes/rollback-demo.ps1`.
-Replace the demo passwords in `00-namespace-config.yaml` (Secret) before sharing the cluster.
-In Kubernetes: frontend, backend (2 replicas), PostgreSQL (PVC), Nginx, Prometheus, Grafana. Outside the cluster: MLflow, Jenkins, training.
+Rolling update: `kubectl -n featureguard set image deployment/backend backend=featureguard-backend:2.0.0`
+Rollback: `kubectl -n featureguard rollout undo deployment/backend`
+Tear down: `kubectl delete namespace featureguard`
 
 ## Configuration (environment variables)
 | Variable | Meaning | Default |

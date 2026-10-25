@@ -22,7 +22,7 @@ metadata:
   name: featureguard-secret
   namespace: featureguard
 type: Opaque
-stringData:               # DEMO values - change them. Do not commit real passwords.
+stringData:               # Matches values in .env (never commit real passwords to git)
   POSTGRES_USER: featureguard
-  POSTGRES_PASSWORD: change-me-please
-  GRAFANA_PASSWORD: change-me-too
+  POSTGRES_PASSWORD: mlopsfeatureguard
+  GRAFANA_PASSWORD: mlopsadmin

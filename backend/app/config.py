@@ -1,13 +1,20 @@
-"""All configuration comes from environment variables (see .env.example)."""
+"""All configuration comes from environment variables (see .env.example).
+The backend always uses PostgreSQL in production - start it with Docker Compose:
+    docker compose --env-file .env -f deployment/docker-compose.yml up -d postgres
+
+DATABASE_URL env var overrides the individual POSTGRES_* vars (used by tests).
+"""
 import os
 
 
 def database_url() -> str:
+    # DATABASE_URL override — used by the test suite (SQLite in-memory)
     url = os.getenv("DATABASE_URL")
     if url:
         return url
+    # Production: always PostgreSQL via Docker Compose
     user = os.getenv("POSTGRES_USER", "featureguard")
-    password = os.getenv("POSTGRES_PASSWORD", "change-me")
+    password = os.getenv("POSTGRES_PASSWORD", "mlopsfeatureguard")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     name = os.getenv("POSTGRES_DB", "featureguard")

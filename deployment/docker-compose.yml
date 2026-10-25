@@ -2,24 +2,24 @@
 #   docker compose --env-file .env -f deployment/docker-compose.yml up -d --build
 version: '3.8'
 
-name: featureguard
-
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: featureguard-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Tables are created by the API at startup; database/init.sql is the readable reference schema.
+      - ../database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
-    networks: [appnet]
+    networks:
+      - appnet
 
   backend:
     build:
@@ -40,13 +40,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [appnet]
+    networks:
+      - appnet
 
   frontend:
     build:
       context: ../frontend
     image: featureguard-frontend:${IMAGE_TAG:-latest}
-    networks: [appnet]
+    networks:
+      - appnet
 
   nginx:
     build:
@@ -63,7 +65,8 @@ services:
       interval: 15s
       timeout: 3s
       retries: 5
-    networks: [appnet]
+    networks:
+      - appnet
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.16.2
@@ -76,7 +79,8 @@ services:
       - "5000:5000"
     volumes:
       - mlflowdata:/mlflow
-    networks: [appnet]
+    networks:
+      - appnet
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -86,8 +90,10 @@ services:
       - promdata:/prometheus
     ports:
       - "9090:9090"
-    depends_on: [backend]
-    networks: [appnet]
+    depends_on:
+      - backend
+    networks:
+      - appnet
 
   grafana:
     image: grafana/grafana:11.3.0
@@ -101,12 +107,13 @@ services:
       - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
-    depends_on: [prometheus]
-    networks: [appnet]
+    depends_on:
+      - prometheus
+    networks:
+      - appnet
 
   # Jenkins runs locally on the host (port 8080) - no container needed.
   # Point your local Jenkins at this project's Jenkinsfile via "Pipeline from SCM".
-  # (The jenkins service block has been removed to avoid a port 8080 collision.)
 
 volumes:
   pgdata:

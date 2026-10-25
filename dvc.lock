@@ -36,8 +36,12 @@ stages:
       size: 1549
     - path: ml/train.py
       hash: md5
-      md5: aef0f73a8cea32c698c67fb3e40ed8d1
-      size: 3958
+      md5: 135800c48a9b504bb6d3c33ee6871b6b
+      size: 3749
+    - path: ml/validate_data.py
+      hash: md5
+      md5: 9d6af19ef5c6c639f412eb6d14b96755
+      size: 1782
     params:
       params.yaml:
         data:
@@ -45,6 +49,9 @@ stages:
           test_size: 0.2
           random_state: 42
           drop_duplicates: true
+        mlflow:
+          experiment_name: featureguard-wine-quality
+          registered_model_name: featureguard-wine-rf
         model:
           n_estimators: 200
           max_depth: 12
@@ -56,7 +63,7 @@ stages:
     outs:
     - path: models/metadata.json
       hash: md5
-      md5: 3bf2a881a4486364803ef71b536c05e1
+      md5: 37fcea89927bef28915a34304dcf4df6
       size: 747
     - path: models/model.joblib
       hash: md5
