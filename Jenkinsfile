@@ -110,11 +110,8 @@ if not exist reports mkdir reports
             }
         }
 
-        // Smoke test containers
         stage('Smoke test containers') {
             steps {
-                // Create a temporary smoke-test environment with non-production credentials and non-default host ports.
-                // docker-compose.yml must use ${HTTP_PORT:-80}:80 for nginx and ${PROMETHEUS_PORT:-9090}:9090 for Prometheus.
                 bat '''
 @echo off
 if exist .env.ci del /f /q .env.ci
@@ -126,19 +123,21 @@ if exist .env.example (
 echo IMAGE_TAG=%IMAGE_TAG%>> .env.ci
 echo HTTP_PORT=8081>> .env.ci
 echo POSTGRES_USER=featureguard>> .env.ci
-echo POSTGRES_PASSWORD=fg_smoke_local_2026>> .env.ci
+echo POSTGRES_PASSWORD=fg_smoke_pass>> .env.ci
 echo POSTGRES_DB=featureguard>> .env.ci
-echo PROMETHEUS_PORT=9091>> .env.ci
 '''
+                // Start only the services needed for smoke test - no mlflow/prometheus/grafana
                 bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
-                // 1. Verify backend health directly via internal network
+                // Wait for backend to be fully ready (readiness probe passes)
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 --retry 10 --retry-delay 3 --retry-connrefused -fsS http://backend:8000/ready'
+                // Test 1: backend health directly
                 bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://backend:8000/health'
-                // 2. Verify prediction endpoint on backend directly
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -g -X POST -H "Content-Type: application/json" -d "{\\"fixed_acidity\\":7.4,\\"volatile_acidity\\":0.7,\\"citric_acid\\":0.0,\\"residual_sugar\\":1.9,\\"chlorides\\":0.076,\\"free_sulfur_dioxide\\":11,\\"total_sulfur_dioxide\\":34,\\"density\\":0.9978,\\"ph\\":3.51,\\"sulphates\\":0.56,\\"alcohol\\":9.4}" http://backend:8000/predict'
-                // 3. Verify reverse proxy routing through nginx
+                // Test 2: prediction via backend directly
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://backend:8000/predict'
+                // Test 3: nginx reverse proxy health
                 bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://nginx/api/health'
-                // 4. Verify end-to-end prediction through nginx
-                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -g -X POST -H "Content-Type: application/json" -d "{\\"fixed_acidity\\":7.4,\\"volatile_acidity\\":0.7,\\"citric_acid\\":0.0,\\"residual_sugar\\":1.9,\\"chlorides\\":0.076,\\"free_sulfur_dioxide\\":11,\\"total_sulfur_dioxide\\":34,\\"density\\":0.9978,\\"ph\\":3.51,\\"sulphates\\":0.56,\\"alcohol\\":9.4}" http://nginx/api/predict'
+                // Test 4: full prediction through nginx
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://nginx/api/predict'
             }
             post {
                 always {
