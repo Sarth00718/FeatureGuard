@@ -26,9 +26,11 @@ pipeline {
     }
 
     environment {
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
-        VENV      = "${env.WORKSPACE}\\.venv"
-        PYTHON    = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+        IMAGE_TAG    = "${env.BUILD_NUMBER}"
+        VENV         = "${env.WORKSPACE}\\.venv"
+        PYTHON       = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+        DOCKER       = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe"
+        COMPOSE      = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker-compose.exe"
     }
 
     stages {
@@ -96,9 +98,9 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
         // Build Docker images
         stage('Build Docker images') {
             steps {
-                bat 'docker build -t featureguard-backend:%IMAGE_TAG%  -f backend/Dockerfile .'
-                bat 'docker build -t featureguard-frontend:%IMAGE_TAG% frontend'
-                bat 'docker build -t featureguard-nginx:%IMAGE_TAG%    -f nginx/Dockerfile .'
+                bat '"%DOCKER%" build -t featureguard-backend:%IMAGE_TAG%  -f backend/Dockerfile .'
+                bat '"%DOCKER%" build -t featureguard-frontend:%IMAGE_TAG% frontend'
+                bat '"%DOCKER%" build -t featureguard-nginx:%IMAGE_TAG%    -f nginx/Dockerfile .'
             }
         }
 
@@ -106,13 +108,13 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
         stage('Smoke test containers') {
             steps {
                 bat 'copy .env.example .env.ci'
-                bat 'docker compose -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
-                bat 'docker run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://nginx/api/health'
-                bat 'docker run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://nginx/api/predict'
+                bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS http://nginx/api/health'
+                bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS -X POST -H "Content-Type: application/json" -d "{\"fixed_acidity\":7.4,\"volatile_acidity\":0.7,\"citric_acid\":0.0,\"residual_sugar\":1.9,\"chlorides\":0.076,\"free_sulfur_dioxide\":11,\"total_sulfur_dioxide\":34,\"density\":0.9978,\"ph\":3.51,\"sulphates\":0.56,\"alcohol\":9.4}" http://nginx/api/predict'
             }
             post {
                 always {
-                    bat 'docker compose -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml down -v || exit 0'
+                    bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment/docker-compose.yml down -v || exit 0'
                 }
             }
         }
@@ -124,11 +126,11 @@ if exist "C:\\Users\\SARTH\\OneDrive\\Desktop\\MLOps\\FeatureGuard\\.venv\\Scrip
                 withCredentials([file(credentialsId: 'featureguard-env', variable: 'ENV_FILE')]) {
                     script {
                         // remember the running tag so we can go back to it if verification fails
-                        def img = bat(returnStdout: true, script: '@docker inspect --format "{{.Config.Image}}" featureguard-prod-backend-1 2>nul & exit /b 0')
+                        def img = bat(returnStdout: true, script: '@"%DOCKER%" inspect --format "{{.Config.Image}}" featureguard-prod-backend-1 2>nul & exit /b 0')
                         img = img.trim()
                         env.PREV_TAG = img ? img.tokenize(':').last() : ''
                     }
-                    bat 'docker compose -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d --build --wait --wait-timeout 180 postgres backend frontend nginx'
+                    bat '"%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d --build --wait --wait-timeout 180 postgres backend frontend nginx'
                 }
             }
         }
@@ -157,7 +159,7 @@ kubectl -n featureguard rollout status deployment/frontend --timeout=120s || (ku
             steps {
                 script {
                     if (params.DEPLOY_TARGET == 'compose') {
-                        bat 'docker run --rm --network featureguard-prod_appnet curlimages/curl:8.10.1 -fsS --retry 10 --retry-delay 3 --retry-connrefused http://nginx/api/ready'
+                        bat '"%DOCKER%" run --rm --network featureguard-prod_appnet curlimages/curl:8.10.1 -fsS --retry 10 --retry-delay 3 --retry-connrefused http://nginx/api/ready'
                     } else {
                         withCredentials([file(credentialsId: 'featureguard-kube', variable: 'KUBECONFIG')]) {
                             bat 'kubectl -n featureguard get pods && kubectl -n featureguard rollout status deployment/nginx --timeout=60s'
@@ -178,7 +180,7 @@ kubectl -n featureguard rollout status deployment/frontend --timeout=120s || (ku
                 // Compose rollback: bring the previous image tag back if the verify/deploy stage failed
                 if (params.DEPLOY_TARGET == 'compose' && env.PREV_TAG?.trim() && env.PREV_TAG != env.IMAGE_TAG) {
                     withCredentials([file(credentialsId: 'featureguard-env', variable: 'ENV_FILE')]) {
-                        bat 'set "IMAGE_TAG=%PREV_TAG%" && docker compose -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d postgres backend frontend nginx || exit 0'
+                        bat 'set "IMAGE_TAG=%PREV_TAG%" && "%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment/docker-compose.yml up -d postgres backend frontend nginx || exit 0'
                     }
                 }
             }
