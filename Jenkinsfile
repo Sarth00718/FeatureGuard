@@ -22,6 +22,7 @@ pipeline {
         // Update these paths if Python or Docker is installed elsewhere.
         PYTHON = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
         DOCKER = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe"
+        COMPOSE = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker-compose.exe"
         KUBECTL = "C:\\Users\\SARTH\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\kubectl.exe"
     }
 
@@ -117,14 +118,14 @@ if errorlevel 1 exit /b 1
     echo GRAFANA_PASSWORD=fg_smoke_local
 ) > .env.ci
 '''
-                bat '"%DOCKER%" compose -p fg-smoke --env-file .env.ci -f deployment\\docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
+                bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment\\docker-compose.yml up -d --wait --wait-timeout 180 postgres backend frontend nginx'
                 bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS --retry 10 --retry-delay 2 --retry-connrefused http://backend:8000/health'
                 bat '"%DOCKER%" run --rm --network fg-smoke_appnet curlimages/curl:8.10.1 -fsS --retry 10 --retry-delay 2 --retry-connrefused http://nginx/api/health'
             }
             post {
                 always {
-                    bat '"%DOCKER%" compose -p fg-smoke --env-file .env.ci -f deployment\\docker-compose.yml down -v'
-                    bat 'if exist .env.ci del /f /q .env.ci'
+                    bat '"%COMPOSE%" -p fg-smoke --env-file .env.ci -f deployment\\docker-compose.yml down -v || exit 0'
+                    bat 'if exist .env.ci del /f /q .env.ci || exit 0'
                 }
             }
         }
@@ -135,7 +136,7 @@ if errorlevel 1 exit /b 1
             }
             steps {
                 withCredentials([file(credentialsId: 'featureguard-env', variable: 'ENV_FILE')]) {
-                    bat '"%DOCKER%" compose -p featureguard-prod --env-file "%ENV_FILE%" -f deployment\\docker-compose.yml up -d --no-build --wait --wait-timeout 180 postgres backend frontend nginx'
+                    bat '"%COMPOSE%" -p featureguard-prod --env-file "%ENV_FILE%" -f deployment\\docker-compose.yml up -d --no-build --wait --wait-timeout 180 postgres backend frontend nginx'
                 }
             }
         }
